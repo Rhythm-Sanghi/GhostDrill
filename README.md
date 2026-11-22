@@ -1,13 +1,15 @@
 # Ghost Drill
 
-Ghost Drill is a browser-based rehearsal for a network maintenance change. The warehouse scenario uses synthetic gateway states to show whether shipping label printing comes back after rollback. The runbook, map, and evidence panel share the same recorded snapshots.
+Ghost Drill is a browser-based rehearsal for network maintenance. Its synthetic warehouse scenarios distinguish a completed rollback from verified service recovery. The evidence compares required checks for label printing and the queue endpoint across Baseline and Rollback.
 
 ## Try the warehouse drill
 
-1. Select **Try the warehouse drill**. The runbook reports **Rollback completed** while the service reports **Service still down**.
+1. Select **Try the warehouse drill**. The runbook reports **Rollback completed** while verification reports **Failed** and printing stays down.
 2. Select **Inspect responsible step** in Evidence to jump to the Change step that pointed the queue at backup. Select earlier steps to inspect their snapshots.
-3. Under **Edit rollback**, add **Restore label queue endpoint** and select **Rerun drill**. The new run starts from Baseline and reports **Service recovered**.
+3. Under **Edit rollback**, add **Restore label queue endpoint** and select **Rerun drill**. The new run starts from Baseline and reports **Verified**.
 4. Select **Reset** to restore the original plan and starting snapshot.
+
+Choose **Missing Print Path Evidence** from **Scenario** and run it to reproduce **Unknown**. The queue endpoint is restored, but reachability from the primary gateway to the print service was not observed. Reset and rerun to repeat it.
 
 ## Run locally
 
@@ -39,6 +41,6 @@ The build emits relative asset paths into `dist/`. To publish, choose **GitHub A
 
 ## Contributions and license
 
-The project brief and Threadmark visual reference came from Rhythm Sanghi. OpenAI Codex implemented and tested this first pass. The source is new and the Threadmark screenshots informed the visual direction. Kiro’s implementation pass is pending.
+The project brief and Threadmark visual reference came from Rhythm Sanghi. OpenAI Codex implemented and tested the browser rehearsal. See the [verified recovery requirements](.kiro/specs/verified-service-recovery/requirements.md) for the verdict rules and acceptance criteria.
 
 Ghost Drill is released under the [MIT License](LICENSE). Bundled fonts, icons, and libraries retain their [third-party licenses](public/third-party-licenses.txt).

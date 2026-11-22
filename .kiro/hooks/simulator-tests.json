@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Run Ghost Drill simulator tests",
+      "description": "Run the deterministic fixture and verdict suite after a simulator or fixture save.",
+      "trigger": "PostFileSave",
+      "matcher": "(^|[/\\\\])src[/\\\\](simulator|scenario)\\.ts$",
+      "action": {
+        "type": "command",
+        "command": "npm test"
+      }
+    }
+  ]
+}

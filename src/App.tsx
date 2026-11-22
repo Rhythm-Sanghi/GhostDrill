@@ -1,7 +1,8 @@
 import { Activity, ChevronRight, ClipboardList, FlaskConical, Play, Plus, RotateCcw, X } from 'lucide-react'
-import { useState } from 'react'
-import { createRollbackPlan, restoreQueue, scenarios, warehouseOutage, type Phase } from './scenario'
+import { useMemo, useState } from 'react'
+import { createRollbackPlan, restoreQueue, scenarios, warehouseOutage, type DrillScenario, type Phase, type RunbookStep } from './scenario'
 import { createBaselineSnapshot, runDrill, type DrillRun } from './simulator'
+import { compareRuns, resolveComparisonTitles, type ResolvedRunComparison, type RunRef } from './comparison'
 import { ServiceMap } from './ServiceMap'
 import { Evidence } from './Evidence'
 
@@ -13,18 +14,33 @@ const printOutcomes = {
 }
 const verdictTones = { Verified: 'good', Failed: 'bad', Unknown: 'warning' }
 
+function rollbackStepTitleFor(scenario: DrillScenario): (id: string) => string {
+  const universe: readonly RunbookStep[] = [...scenario.rollbackSteps, restoreQueue]
+  return (id: string) => universe.find((step) => step.id === id)?.title ?? id
+}
+
 export function App() {
   const [scenario, setScenario] = useState(warehouseOutage)
   const [includeRestore, setIncludeRestore] = useState(false)
   const [run, setRun] = useState<DrillRun | null>(null)
-  const [selectedId, setSelectedId] = useState('baseline')
+  const [previousRun, setPreviousRun] = useState<DrillRun | null>(null)
+  const [selectedRef, setSelectedRef] = useState<{ run: RunRef; id: string }>({ run: 'current', id: 'baseline' })
   const [runCount, setRunCount] = useState(0)
   const initialSnapshot = run?.snapshots[0] ?? createBaselineSnapshot(scenario)
   const plan = createRollbackPlan(scenario, includeRestore)
-  const selected = run?.snapshots.find(({ id }) => id === selectedId) ?? initialSnapshot
+  const activeRun = selectedRef.run === 'prior' ? previousRun : run
+  const currentRunLabel = `Current run · Run ${String(runCount).padStart(2, '0')}`
+  const inspectedRunLabel = selectedRef.run === 'prior'
+    ? `Previous run · Run ${String(runCount - 1).padStart(2, '0')}`
+    : currentRunLabel
+  const selected = activeRun?.snapshots.find(({ id }) => id === selectedRef.id) ?? initialSnapshot
   const pending = Boolean(run && (run.executedRollbackStepIds.length !== plan.length
     || plan.some(({ id }, index) => id !== run.executedRollbackStepIds[index])))
   const printOutcome = run && printOutcomes[run.finalSnapshot.checks['label-printing'].status]
+  const comparison = useMemo<ResolvedRunComparison | null>(() => {
+    if (!previousRun || !run) return null
+    return resolveComparisonTitles(compareRuns(previousRun, run), rollbackStepTitleFor(scenario))
+  }, [previousRun, run, scenario])
   const steps = [
     initialSnapshot,
     ...scenario.changeSteps.map((step) => ({ ...step, phase: 'Change' as const })),
@@ -35,16 +51,18 @@ export function App() {
   }
 
   function executeDrill() {
+    setPreviousRun(run)
     const nextRun = runDrill(scenario, plan)
     setRun(nextRun)
-    setSelectedId(nextRun.finalSnapshot.id)
+    setSelectedRef({ run: 'current', id: nextRun.finalSnapshot.id })
     setRunCount((count) => count + 1)
   }
 
   function clearRun() {
     setIncludeRestore(false)
     setRun(null)
-    setSelectedId(initialSnapshot.id)
+    setPreviousRun(null)
+    setSelectedRef({ run: 'current', id: 'baseline' })
     setRunCount(0)
   }
 
@@ -60,9 +78,13 @@ export function App() {
     clearRun()
   }
 
-  function jumpToStep(id: string) {
-    setSelectedId(id)
-    document.getElementById(`step-${id}`)?.focus()
+  function selectSnapshot(id: string, runRef: RunRef = 'current') {
+    setSelectedRef({ run: runRef, id })
+    if (runRef === 'current') {
+      document.getElementById(`step-${id}`)?.focus()
+    } else {
+      document.getElementById('service-map')?.focus()
+    }
   }
 
   return (
@@ -120,7 +142,7 @@ export function App() {
 
         <div className="workspace-grid">
           <section className="panel runbook" aria-labelledby="runbook-heading">
-            <header className="panel-header"><h2 id="runbook-heading"><ClipboardList size={17} /> Runbook</h2><span className="panel-meta">Timeline</span></header>
+            <header className="panel-header"><h2 id="runbook-heading"><ClipboardList size={17} /> Runbook</h2><span className="panel-meta">{run ? currentRunLabel : 'Timeline'}</span></header>
             <div className="timeline">
               {phases.map((phase) => (
                 <div className="phase" key={phase}>
@@ -133,13 +155,13 @@ export function App() {
                       return (
                         <li key={step.id}>
                           <button type="button" className="step" id={`step-${step.id}`}
-                            aria-current={selected.id === step.id ? 'step' : undefined}
-                            disabled={!snapshot} onClick={() => setSelectedId(step.id)}>
+                            aria-current={selectedRef.run === 'current' && selectedRef.id === step.id ? 'step' : undefined}
+                            disabled={!snapshot} onClick={() => setSelectedRef({ run: 'current', id: step.id })}>
                             <span className={`step-marker ${snapshot?.checks['label-printing'].status ?? ''}`} />
                             <span>{step.title}{removed && <small>Removed from plan</small>}
                               {scenario.canEditRollback && step.id === restoreQueue.id && !snapshot && <small>Pending execution</small>}
                             </span>
-                            {selected.id === step.id && <ChevronRight className="step-chevron" size={15} aria-hidden="true" />}
+                            {selectedRef.run === 'current' && selectedRef.id === step.id && <ChevronRight className="step-chevron" size={15} aria-hidden="true" />}
                           </button>
                         </li>
                       )
@@ -159,8 +181,8 @@ export function App() {
             </div>}
           </section>
 
-          <ServiceMap snapshot={selected} />
-          <Evidence snapshot={selected} requiredChecks={scenario.requiredChecks} run={run} jumpToStep={jumpToStep} />
+          <ServiceMap snapshot={selected} runLabel={activeRun ? inspectedRunLabel : undefined} />
+          <Evidence snapshot={selected} requiredChecks={scenario.requiredChecks} run={activeRun} runLabel={inspectedRunLabel} comparison={comparison} selectedRunRef={selectedRef.run} onSelectSnapshot={selectSnapshot} />
         </div>
 
         <footer className="workspace-footer"><FlaskConical size={15} aria-hidden="true" /> Synthetic data <span>·</span> Checks the queue endpoint and its active path to the print service.</footer>

@@ -14,19 +14,19 @@ const printerLabels = {
   unknown: { text: 'Print status unknown', tone: 'warning', node: 'unobserved' },
 }
 
-export function ServiceMap({ snapshot }: { snapshot: Snapshot }) {
+export function ServiceMap({ snapshot, runLabel }: { snapshot: Snapshot; runLabel?: string }) {
   const { state, checks } = snapshot
   const printer = printerLabels[checks['label-printing'].status]
 
   return (
-    <section className="panel map" aria-labelledby="map-heading">
+    <section className="panel map" id="service-map" tabIndex={-1} aria-labelledby="map-heading" aria-describedby={runLabel ? 'map-run' : undefined}>
       <header className="panel-header">
         <h2 id="map-heading"><GitFork size={17} /> Service map</h2>
         <span className="panel-meta">{snapshot.phase} snapshot</span>
       </header>
       <div className="map-canvas">
         <div className="map-context">
-          <span className="eyebrow">Warehouse network</span>
+          <span className="eyebrow" id="map-run">{runLabel ?? 'Warehouse network'}</span>
           <strong>{snapshot.title}</strong>
         </div>
         <div className="topology">

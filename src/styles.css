@@ -18,7 +18,7 @@
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; min-width: 280px; }
 button, select { font: inherit; }
-button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button:focus-visible, select:focus-visible, .map:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 button:disabled { cursor: default; }
 svg { flex: none; }
 h1, h2, h3, h4, p { margin: 0; }
@@ -138,6 +138,7 @@ h1 { font-size: clamp(2.15rem, 4.4vw, 3.55rem); font-weight: 650; letter-spacing
 .proof-group { display: grid; gap: 12px; }
 .proof-group h3 { grid-column: 1 / -1; font-weight: 400; }
 .proof-group > p { color: var(--muted); font-size: .875rem; }
+.proof-run-label { grid-column: 1 / -1; margin-top: -7px; }
 .proof-check { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); min-width: 0; }
 .proof-check h4 { font-size: .925rem; }
 .proof-result { font-size: .8125rem; line-height: 1.45; }
@@ -179,3 +180,8 @@ h1 { font-size: clamp(2.15rem, 4.4vw, 3.55rem); font-weight: 650; letter-spacing
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
 }
+
+.comparison-verdict { font-size: .875rem; }
+.comparison-identical { color: var(--muted); font-size: .8125rem; }
+.comparison-diff { font-size: .8125rem; }
+.comparison-diff ul { list-style: disc; padding-left: 1.2em; margin: 4px 0 0; }

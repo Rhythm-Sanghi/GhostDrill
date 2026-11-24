@@ -135,7 +135,7 @@ export function executeRestart(scenario: ScenarioId, revision: RestartRevision, 
         if (interrupt('after-checkpoint', action)) continue
         break
       case 'verify-recovery':
-        record('Shipping recovery checked', `Printing is ${serviceRecovered ? 'available' : 'down'}; downstream records show ${effects.length} committed releases.`, action)
+        record('Optional shipping state inspection', `At this step, printing is ${serviceRecovered ? 'available' : 'down'}; downstream records show ${effects.length} committed releases.`, action)
         break
       case 'restore-routing':
         serviceRecovered = true
@@ -196,12 +196,16 @@ export function exploreRestart(scenario: ScenarioId, revision: RestartRevision) 
   const cases = enumerateCases(revision)
   const results = cases.slice(0, revision.limit).map((testCase) => executeRestart(scenario, revision, testCase))
   const counts = { Pass: 0, Violation: 0, 'Needs evidence': 0 }
-  for (const { status } of results) counts[status]++
+  let boundariesNotReached = 0
+  for (const { status, boundaryReached } of results) {
+    counts[status]++
+    if (!boundaryReached) boundariesNotReached++
+  }
   const complete = results.length === cases.length
   const outcome: 'Violation' | 'Inconclusive' | 'Pass' = counts.Violation > 0 ? 'Violation'
     : !complete || counts['Needs evidence'] > 0 ? 'Inconclusive' : 'Pass'
   return {
-    results, counts, total: cases.length, complete,
+    results, counts, total: cases.length, complete, boundariesNotReached,
     counterexample: results.find(({ status }) => status === 'Violation'),
     outcome,
   }

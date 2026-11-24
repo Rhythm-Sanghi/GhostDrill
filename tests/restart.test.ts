@@ -25,7 +25,7 @@ test('the shipping plan runs cleanly before any interruption or after a saved re
   for (const run of [clean, before, saved]) assert.deepEqual([run.status, run.releases, run.serviceRecovered], ['Pass', 1, true])
   const restart = saved.trace.find(({ title }) => title === 'Restart')
   assert.equal(restart?.receipt, 'RELEASE-1')
-  assert.match(restart?.detail ?? '', /Verify shipping recovery/)
+  assert.match(restart?.detail ?? '', /Inspect simulated shipping state \(optional\)/)
 })
 
 test('an interrupted committed release survives and a retry with a stable key reuses its receipt', () => {
@@ -123,8 +123,41 @@ test('the Node checker exits inconclusive when a passing replay changed its scop
     const checker = fileURLToPath(new URL('../scripts/check-restart.ts', import.meta.url))
     const result = spawnSync(process.execPath, [checker, file], { encoding: 'utf8' })
     assert.equal(result.status, 2, result.stderr)
-    assert.match(result.stdout, /Revised — Pass, 9\/9 evaluated \(complete\)/)
+    assert.match(result.stdout, /Revised — Pass, 9\/9 cases evaluated/)
     assert.match(result.stdout, /Scope changed — limit\. Repair totals withheld\./)
+  } finally {
+    unlinkSync(file)
+    rmdirSync(folder)
+  }
+})
+
+test('the Node checker distinguishes former failures needing evidence and unreached boundaries', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'ghost-drill-check-'))
+  const file = join(folder, 'evidence.json')
+  const checker = fileURLToPath(new URL('../scripts/check-restart.ts', import.meta.url))
+  const unavailable = ['receipt-unavailable'] as const
+  const scenario = 'shipping-release'
+  try {
+    const unavailablePacket = {
+      scenario,
+      original: { ...original, observations: unavailable },
+      revised: { ...repaired, observations: unavailable },
+    } as const
+    writeFileSync(file, buildRestartReplay(unavailablePacket).json)
+    const inconclusive = spawnSync(process.execPath, [checker, file], { encoding: 'utf8' })
+    assert.equal(inconclusive.status, 2, inconclusive.stderr)
+    assert.match(inconclusive.stdout, /0 fixed, 0 still failing, 0 newly failing, 4 former failures need evidence/)
+    const skippedBoundaryPacket = {
+      scenario,
+      original,
+      revised: { ...repaired, actions: repaired.actions.filter((id) => id !== 'record-receipt') },
+    } as const
+    writeFileSync(file, buildRestartReplay(skippedBoundaryPacket).json)
+    const skippedBoundary = spawnSync(process.execPath, [checker, file], { encoding: 'utf8' })
+    assert.equal(skippedBoundary.status, 2, skippedBoundary.stderr)
+    assert.match(skippedBoundary.stdout, /Revised — Inconclusive, 9\/9 cases evaluated/)
+    assert.match(skippedBoundary.stdout, /2 evaluated cases did not reach their targeted interruption boundaries\./)
+    assert.match(skippedBoundary.stdout, /0 fixed, 0 still failing, 0 newly failing, 5 former failures need evidence/)
   } finally {
     unlinkSync(file)
     rmdirSync(folder)

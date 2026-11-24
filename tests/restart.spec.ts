@@ -6,13 +6,86 @@ async function download(page: Page, name: string) {
   return { name: file.suggestedFilename(), text: await readFile(await file.path(), 'utf8') }
 }
 
-async function openReplay(page: Page, text: string) {
+async function openReplay(page: Page, text: string, name = 'restart.json') {
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser', { timeout: 8000 }),
     page.getByRole('button', { name: 'Open replay file' }).click(),
   ])
-  await chooser.setFiles({ name: 'restart.json', mimeType: 'application/json', buffer: Buffer.from(text) })
+  await chooser.setFiles({ name, mimeType: 'application/json', buffer: Buffer.from(text) })
 }
+
+test('a delayed replay cannot replace newer work or a newer import status', async ({ page }) => {
+  const shipping = await readFile('examples/shipping-restart-review.json', 'utf8')
+  const routing = await readFile('examples/routing-restart-review.json', 'utf8')
+  await page.addInitScript(() => {
+    const read = File.prototype.text
+    const pending = new Map<string, () => void>()
+    Object.assign(window, { pendingReplayReads: pending })
+    File.prototype.text = async function () {
+      const text = await read.call(this)
+      if (this.name.startsWith('delayed-')) {
+        await new Promise<void>((resolve) => pending.set(this.name, resolve))
+      }
+      return text
+    }
+  })
+  async function hold(text: string, name: string) {
+    await openReplay(page, text, name)
+    await page.waitForFunction((file) => Reflect.get(window, 'pendingReplayReads').has(file), name)
+  }
+  async function finish(name: string) {
+    await page.evaluate(async (file) => {
+      const pending = Reflect.get(window, 'pendingReplayReads')
+      pending.get(file)()
+      pending.delete(file)
+      // Let the file read and import continuation settle.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }, name)
+  }
+  const status = (text: string) => page.getByRole('status').filter({ hasText: text })
+  const openReview = page.getByRole('button', { name: 'Open restart review' })
+  const shippingHeading = page.getByRole('heading', { name: 'Shipping batch restart' })
+  const routingHeading = page.getByRole('heading', { name: 'Routing verification restart' })
+  const rerun = page.getByRole('button', { name: 'Rerun interruption cases' })
+  const scenario = page.getByRole('combobox', { name: 'Restart scenario' })
+
+  await page.goto('./')
+  await openReview.click()
+  await hold(routing, 'delayed-edit.json')
+  await page.getByRole('button', { name: 'Use a stable batch key' }).click()
+  await finish('delayed-edit.json')
+  await expect(shippingHeading).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Repeat without a stable key' })).toBeVisible()
+  await expect(status('Replay import cancelled')).toBeVisible()
+
+  await hold(routing, 'delayed-rerun.json')
+  await expect(status('Importing replay')).toBeVisible()
+  await rerun.click()
+  await finish('delayed-rerun.json')
+  await expect(shippingHeading).toBeVisible()
+  await expect(status('Replay import cancelled')).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Coverage comparison' })).toContainText('5 fixed')
+
+  await hold(shipping, 'delayed-scenario.json')
+  await scenario.selectOption('routing-verification')
+  await finish('delayed-scenario.json')
+  await expect(routingHeading).toBeVisible()
+  await expect(status('Replay import cancelled')).toBeVisible()
+
+  await hold(routing, 'delayed-older.json')
+  await openReplay(page, shipping)
+  await expect(status('Restart replay opened')).toBeVisible()
+  await finish('delayed-older.json')
+  await expect(shippingHeading).toBeVisible()
+  await expect(status('Restart replay opened')).toBeVisible()
+
+  await hold(routing, 'delayed-before-invalid.json')
+  await openReplay(page, '{')
+  await expect(status('This file is not readable JSON')).toBeVisible()
+  await finish('delayed-before-invalid.json')
+  await expect(shippingHeading).toBeVisible()
+  await expect(status('This file is not readable JSON')).toBeVisible()
+})
 
 test('the restart review preserves the same cases and rebuilds the repair in a fresh browser', async ({ page, browser, baseURL }, testInfo) => {
   const desktop = testInfo.project.name === 'desktop'
@@ -32,7 +105,12 @@ test('the restart review preserves the same cases and rebuilds the repair in a f
     await page.keyboard.press('Enter')
   }
 
-  await activate(page.getByRole('button', { name: 'Open restart review' }))
+  const restartLink = page.getByRole('button', { name: 'Open restart review' })
+  await expect(page.getByText('Check whether restarting a rollback repeats an action that already committed.')).toBeInViewport()
+  await expect(restartLink).toBeInViewport()
+  expect((await restartLink.boundingBox())!.y).toBeLessThan((await page.getByRole('heading', { name: 'Runbook', exact: true }).boundingBox())!.y)
+  await expect(restartLink).toHaveClass(/\bprimary\b/)
+  await activate(restartLink)
   await expect(page.getByRole('heading', { name: 'Shipping batch restart' })).toBeFocused()
   const coverage = page.getByRole('region', { name: 'Exploration coverage' })
   await expect(coverage.getByText(/Uninterrupted run · Pass · Service recovered/)).toBeVisible()
@@ -118,8 +196,52 @@ test('routing uses the same explorer and a saved disposition goes stale on draft
   await page.getByText('Edit requirements and exploration scope', { exact: true }).click()
   await page.getByLabel('Case limit').fill('1')
   await page.getByRole('button', { name: 'Rerun interruption cases' }).click()
-  await expect(page.getByRole('region', { name: 'Exploration coverage' })).toContainText('Coverage incomplete')
+  await expect(page.getByRole('region', { name: 'Exploration coverage' })).toContainText('1/3 cases evaluated')
+  await expect(page.getByRole('region', { name: 'Exploration coverage' })).toContainText('Case limit reached')
   await expect(page.getByRole('region', { name: 'Coverage comparison' })).toContainText('2 original cases not repeated')
   await expect(page.getByRole('region', { name: 'Coverage comparison' })).toContainText('Repair totals withheld')
   await expect(page.getByRole('button', { name: 'Inspect repaired case' })).toHaveCount(0)
+})
+
+test('restart review explains optional shipping inspection, unreached boundaries, and former failures needing evidence', async ({ page }) => {
+  const packet = JSON.parse(await readFile('examples/shipping-restart-review.json', 'utf8'))
+  const coverage = page.getByRole('region', { name: 'Exploration coverage' })
+  const comparison = page.getByRole('region', { name: 'Coverage comparison' })
+  const inspection = 'Inspect simulated shipping state (optional)'
+  await page.goto('./')
+  await openReplay(page, JSON.stringify(packet))
+  await expect(coverage).toContainText('The verdict evaluates the selected requirements. The optional inspection only records simulated state.')
+  await expect(coverage).toContainText('Recover service and release exactly once')
+  expect((await download(page, 'Download restart report')).text).toContain(inspection)
+
+  const noInspection = packet.revised.actions.filter((id: string) => id !== 'verify-recovery')
+  packet.revised.actions = ['verify-recovery', ...noInspection]
+  await openReplay(page, JSON.stringify(packet))
+  await page.getByRole('button', { name: 'View uninterrupted run' }).click()
+  await expect(page.getByText('At this step, printing is down; downstream records show 0 committed releases.')).toBeVisible()
+  await expect(coverage).toContainText('9 passed · 0 failed · 0 need evidence')
+  await page.getByText('Edit ordered actions', { exact: true }).click()
+  await page.getByRole('button', { name: `Remove ${inspection}`, exact: true }).click()
+  await page.getByRole('button', { name: 'Rerun interruption cases' }).click()
+  await expect(coverage).toContainText('9 passed · 0 failed · 0 need evidence')
+  await expect(page.getByText(/Optional shipping state inspection/)).toHaveCount(0)
+
+  packet.original.observations = ['receipt-unavailable']
+  packet.revised.observations = ['receipt-unavailable']
+  await openReplay(page, JSON.stringify(packet))
+  await expect(comparison).toContainText('4 former failures need evidence')
+  expect((await download(page, 'Download restart report')).text).toContain('4 former failures need evidence')
+
+  packet.original.observations = ['standard']
+  packet.revised.observations = ['standard']
+  packet.revised.actions = packet.revised.actions.filter((id: string) => id !== 'record-receipt')
+  await openReplay(page, JSON.stringify(packet))
+  await expect(coverage).toContainText('9/9 cases evaluated')
+  await expect(coverage).toContainText('2 evaluated cases did not reach their targeted interruption boundaries.')
+  await expect(coverage).toContainText('Inconclusive')
+  await expect(comparison).toContainText('0 fixed')
+  await expect(page.getByRole('button', { name: 'Inspect repaired case' })).toHaveCount(0)
+  const { text } = await download(page, 'Download restart report')
+  expect(text).toContain('9/9 cases evaluated')
+  expect(text).toContain('2 evaluated cases did not reach their targeted interruption boundaries.')
 })

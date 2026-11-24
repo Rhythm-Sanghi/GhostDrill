@@ -3,10 +3,10 @@ import { flushSync } from 'react-dom'
 import { Activity, ArrowLeft, Download, FlaskConical } from 'lucide-react'
 import { RestartDraft } from './RestartDraft'
 import type { CaseResult, Exploration } from './restartEngine'
-import { actions, boundaryLabels, observationLabels, requirements, restartFixtures, restartLabels, type ScenarioId } from './restartModel'
+import { actions, boundaryLabels, observationLabels, requirements, restartFixtures, restartLabels, shippingVerdictScope, type RestartRevision, type ScenarioId } from './restartModel'
 import {
-  buildRestartReplay, caseLabel, dispositionOptions, evaluateRestartReplay, noteLimit,
-  restartMarkdown, revisionFingerprint, type RestartReplay, type ReviewNote,
+  buildRestartReplay, caseLabel, dispositionOptions, evaluateRestartReplay, formerFailuresNeedEvidence, noteLimit,
+  restartCoverageNotes, restartMarkdown, revisionFingerprint, type RestartReplay, type ReviewNote,
 } from './restartReplay'
 import { downloadFile } from './report'
 
@@ -22,9 +22,10 @@ function focusReview(id: string) {
   target?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
 }
 
-function Coverage({ title, exploration, onInspect, inspectLabel }: {
+function Coverage({ title, exploration, selectedRequirements, onInspect, inspectLabel }: {
   title: string
   exploration: Exploration
+  selectedRequirements?: RestartRevision['requirements']
   onInspect: () => void
   inspectLabel: string
 }) {
@@ -35,8 +36,8 @@ function Coverage({ title, exploration, onInspect, inspectLabel }: {
       <strong className={tones[exploration.outcome]}>{exploration.outcome}</strong>
       <p>Uninterrupted run · {clean.status} · Service {clean.serviceRecovered ? 'recovered' : 'down'}</p>
       <p>{exploration.counts.Pass} passed · {exploration.counts.Violation} failed · {exploration.counts['Needs evidence']} need evidence</p>
-      <p>{exploration.complete ? 'Coverage complete' : 'Coverage incomplete · Case limit reached'} · {exploration.results.length}/{exploration.total}</p>
-      {!exploration.complete && <p>Unexamined cases remain inconclusive.</p>}
+      {restartCoverageNotes(exploration).map((note, index) => <p className={index > 0 ? 'warning' : undefined} key={note}>{note}</p>)}
+      {selectedRequirements && <p>Selected requirements · {selectedRequirements.map((id) => requirements[id]).join(' · ') || 'None selected'}</p>}
       {exploration.counterexample && <button type="button" className="step-link comparison-jump" onClick={onInspect}>{inspectLabel}</button>}
     </div>
   )
@@ -76,11 +77,12 @@ function Trace({ result, revisionLabel, onInspectRepaired }: {
   )
 }
 
-export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
+export function RestartReview({ initial, onBack, onScenario, onOpen, onWorkspaceChange, status }: {
   initial: RestartReplay
   onBack: () => void
   onScenario: (scenario: ScenarioId) => void
   onOpen: (file: File) => void
+  onWorkspaceChange: () => void
   status: { text: string; error?: boolean } | null
 }) {
   const { scenario, original } = initial
@@ -125,7 +127,14 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
     focusReview(receipt ? `restart-event-${receipt.number}` : 'restart-evidence-heading')
   }
 
+  function changeDraft(next: RestartRevision) {
+    if (revisionFingerprint(scenario, next) === draftFingerprint) return
+    onWorkspaceChange()
+    setDraft(next)
+  }
+
   function rerun() {
+    onWorkspaceChange()
     flushSync(() => {
       setRevised(draft)
       setView('after')
@@ -164,7 +173,8 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
               </select>
             </label>
             <button type="button" className="step-link restart-back" onClick={onBack}><ArrowLeft size={15} aria-hidden="true" /> Back to drills</button>
-            <button type="button" className="step-link" onClick={() => fileInput.current?.click()}>Open replay file</button>
+            <button type="button" className="step-link" aria-describedby="replay-import-status" onClick={() => fileInput.current?.click()}>Open replay file</button>
+            <p id="replay-import-status" className={status?.error ? 'import-status bad' : 'import-status'} role="status">{status?.text}</p>
             <input type="file" ref={fileInput} hidden accept=".json,application/json" aria-label="Choose a restart replay"
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0]
@@ -173,12 +183,14 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
               }} />
           </div>
         </section>
-        <p className={status?.error ? 'import-status bad' : 'import-status'} role="status">{status?.text}</p>
         <section className="summary restart-summary" aria-label="Exploration coverage">
           <Coverage title="Original plan" exploration={evaluated.before}
+            selectedRequirements={scenario === 'shipping-release' ? original.requirements : undefined}
             onInspect={() => firstFailure('before')} inspectLabel="Inspect first counterexample" />
-          {evaluated.after && <Coverage title="Revised plan" exploration={evaluated.after}
+          {evaluated.after && revised && <Coverage title="Revised plan" exploration={evaluated.after}
+            selectedRequirements={scenario === 'shipping-release' ? revised.requirements : undefined}
             onInspect={() => firstFailure('after')} inspectLabel="Inspect revised counterexample" />}
+          {scenario === 'shipping-release' && <p className="restart-verdict-scope">{shippingVerdictScope}</p>}
         </section>
         {comparison && (
           <section className="panel restart-compare" aria-labelledby="restart-comparison-heading">
@@ -187,7 +199,7 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
               <p>{comparison.matched} cases rechecked · {comparison.notRepeated} original cases not repeated · {comparison.newCases} newly evaluated</p>
               {comparison.changed.length
                 ? <p className="warning">Scope changed · {comparison.changed.map((key) => scopeLabels[key]).join(', ')}. Repair totals withheld.</p>
-                : <p>{comparison.fixed} fixed · {comparison.remaining} still failing · {comparison.introduced} newly failing · {comparison.inconclusive} need evidence after repair</p>}
+                : <p>{comparison.fixed} fixed · {comparison.remaining} still failing · {comparison.introduced} newly failing · {formerFailuresNeedEvidence(comparison.inconclusive)}</p>}
             </div>
             {repairedCase && (
               <div className="restart-panel-body restart-comparison-action">
@@ -197,7 +209,7 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
           </section>
         )}
         <div className="restart-grid">
-          <RestartDraft scenario={scenario} draft={draft} pending={pending} onChange={setDraft} onRerun={rerun} />
+          <RestartDraft scenario={scenario} draft={draft} pending={pending} onChange={changeDraft} onRerun={rerun} />
           <section className="panel restart-evidence" aria-labelledby="restart-evidence-heading">
             <header className="panel-header"><h2 id="restart-evidence-heading" tabIndex={-1}>Inspect an execution</h2></header>
             <div className="restart-panel-body">
@@ -254,11 +266,14 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
                 <p>Local notes record a model review only and carry no approval authority.</p>
                 {review && <p role="status" className={reviewedEarlier ? 'warning' : 'good'}>{review.disposition}
                   {reviewedEarlier ? ' · Belongs to an earlier revision' : ` · Revision ${review.fingerprint}`}</p>}
-                <form onSubmit={(event) => {
+                <form onChange={onWorkspaceChange} onSubmit={(event) => {
                   event.preventDefault()
                   const data = new FormData(event.currentTarget)
                   const disposition = dispositionOptions.find((item) => item === data.get('disposition'))
-                  if (disposition) setReview({ disposition, note: String(data.get('note') ?? ''), fingerprint: currentFingerprint })
+                  if (disposition) {
+                    onWorkspaceChange()
+                    setReview({ disposition, note: String(data.get('note') ?? ''), fingerprint: currentFingerprint })
+                  }
                 }}>
                   <label>Disposition<select name="disposition" defaultValue={review?.disposition ?? dispositionOptions[0]}>
                     {dispositionOptions.map((item) => <option key={item}>{item}</option>)}

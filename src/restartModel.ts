@@ -2,11 +2,13 @@ export const actions = {
   'restore-printing': 'Restore printing',
   'release-batch': 'Release held batch',
   'record-receipt': 'Record release receipt',
-  'verify-recovery': 'Verify shipping recovery',
+  'verify-recovery': 'Inspect simulated shipping state (optional)',
   'restore-routing': 'Restore routing',
   'save-progress': 'Save routing checkpoint',
   'verify-routing': 'Verify restored routing',
 } as const
+
+export const shippingVerdictScope = 'The verdict evaluates the selected requirements. The optional inspection only records simulated state.'
 
 export const requirements = {
   'at-most-once': 'Release the batch at most once',

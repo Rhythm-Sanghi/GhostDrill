@@ -40,6 +40,7 @@ export function App() {
   const [importStatus, setImportStatus] = useState<{ text: string; error?: boolean } | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const importRequest = useRef(0)
+  const importPending = useRef(false)
   const [selectedRef, setSelectedRef] = useState<{
     run: RunRef; id: string; fromComparison?: boolean
     acceptance?: { rule: AcceptanceRuleId; finding: AcceptanceEvidence }
@@ -82,11 +83,23 @@ export function App() {
     steps.push({ ...restoreQueue, phase: 'Rollback' })
   }
 
-  function executeDrill() {
+  function cancelReplayImport() {
     importRequest.current++
+    if (!importPending.current) return null
+    importPending.current = false
+    return { text: 'Replay import cancelled. The workspace changed.' }
+  }
+
+  function preserveWorkspaceEdit() {
+    const cancellation = cancelReplayImport()
+    if (cancellation) setImportStatus(cancellation)
+  }
+
+  function executeDrill() {
+    const cancellation = cancelReplayImport()
     setImportStatus(runCount === Number.MAX_SAFE_INTEGER
       ? { text: 'The two retained runs are now numbered Run 01 and Run 02.' }
-      : null)
+      : cancellation)
     setContingencies([])
     setPreviousRun(run)
     const nextRun = recordDrill(scenario, plan, assumption, requirements)
@@ -96,8 +109,7 @@ export function App() {
   }
 
   function clearRun(nextScenario = scenario) {
-    importRequest.current++
-    setImportStatus(null)
+    setImportStatus(cancelReplayImport())
     setLocalReplay(false)
     setAssumption(defaultAssumption(nextScenario))
     setRequirements(acceptanceRules(nextScenario))
@@ -162,6 +174,7 @@ export function App() {
     const nextPlan = [...plan]
     const [step] = nextPlan.splice(index, 1)
     nextPlan.splice(destination, 0, step)
+    preserveWorkspaceEdit()
     setDraftOrder(nextPlan)
   }
 
@@ -199,10 +212,11 @@ export function App() {
   }
 
   function enterRestart(replay: RestartReplay, message?: string) {
-    const key = ++importRequest.current
+    const cancellation = cancelReplayImport()
+    const key = importRequest.current
     flushSync(() => {
       setRestart({ key, replay })
-      setImportStatus(message ? { text: message } : null)
+      setImportStatus(message ? { text: message } : cancellation)
     })
     document.getElementById('restart-heading')?.focus({ preventScroll: true })
     window.scrollTo({ top: 0, behavior: 'instant' })
@@ -214,16 +228,20 @@ export function App() {
 
   async function openReplay(file: File) {
     const request = ++importRequest.current
+    importPending.current = true
+    setImportStatus({ text: 'Importing replay…' })
     try {
       if (file.size > replayByteLimit) throw new Error('This replay exceeds the 16 KB limit.')
       const json = await file.text()
       if (request !== importRequest.current) return
+      importPending.current = false
       let value: unknown
       try { value = JSON.parse(json) } catch { throw new Error('This file is not readable JSON. Choose a Ghost Drill replay file.') }
       if (looksLikeRestartReplay(value)) enterRestart(readRestartReplay(json), 'Restart replay opened. Evidence rebuilt locally.')
       else loadReplay(readReplayFile(json))
     } catch (error) {
       if (request !== importRequest.current) return
+      importPending.current = false
       setImportStatus({ error: true, text: error instanceof Error ? error.message : 'The replay file could not be read.' })
     }
   }
@@ -231,6 +249,7 @@ export function App() {
   function rehearseContingencies() {
     if (!run) return
     const cases = contingencies.length ? contingencies : assumptionOptions(scenario).filter((option) => option !== run.assumption)
+    preserveWorkspaceEdit()
     flushSync(() => setContingencies([...cases]))
     focusSection('contingencies-heading')
   }
@@ -254,11 +273,12 @@ export function App() {
   if (restart) {
     return <RestartReview key={restart.key} initial={restart.replay}
       onBack={() => {
-        importRequest.current++
-        flushSync(() => { setRestart(null); setImportStatus(null) })
+        const cancellation = cancelReplayImport()
+        flushSync(() => { setRestart(null); setImportStatus(cancellation) })
         focusSection('execute-drill')
       }}
-      onScenario={openRestartSample} onOpen={(file) => void openReplay(file)} status={importStatus} />
+      onScenario={openRestartSample} onOpen={(file) => void openReplay(file)}
+      onWorkspaceChange={preserveWorkspaceEdit} status={importStatus} />
   }
 
   return (
@@ -267,7 +287,7 @@ export function App() {
         <div className="topbar-inner">
           <div className="brand"><span className="brand-icon"><Activity size={21} aria-hidden="true" /></span> Ghost Drill</div>
           <span className="topbar-divider" />
-          <span className="product-type">Network maintenance rehearsal</span>
+          <span className="product-type">Runbook restart review</span>
           <span className="simulation-label"><FlaskConical size={15} aria-hidden="true" /> Simulation</span>
         </div>
       </header>
@@ -275,11 +295,14 @@ export function App() {
       <main className="workspace">
         <section className="intro" aria-labelledby="scenario-heading">
           <div>
-            <p className="eyebrow scenario-label">{scenario.baseline.kind === 'dispatch' ? 'Dispatch drill' : 'Warehouse drill'}</p>
-            <h1 id="scenario-heading">{scenario.title}</h1>
+            {(run || scenario !== warehouseOutage) &&
+              <p className="eyebrow scenario-label">{scenario.baseline.kind === 'dispatch' ? 'Dispatch drill' : 'Warehouse drill'}</p>}
+            <h1 id="scenario-heading">{!run && scenario === warehouseOutage ? 'Review rollback restarts' : scenario.title}</h1>
+            {!run && <p className="intro-description">Check whether restarting a rollback repeats an action that already committed.</p>}
             <p className="intro-description">{scenario.description}</p>
           </div>
           <div className="intro-controls">
+            {!run && <button type="button" className="button primary" onClick={() => openRestartSample()}>Open restart review</button>}
             <label className="scenario-picker">
               <span className="eyebrow">Scenario</span>
               <select value={scenario.id} onChange={(event) => selectScenario(event.target.value)}>
@@ -288,18 +311,18 @@ export function App() {
             </label>
             <div className="intro-actions">
               {(run || draftOrder) && <button type="button" className="button secondary" onClick={reset}><RotateCcw size={16} /> Reset</button>}
-              <button type="button" className="button primary" id="execute-drill" onClick={executeDrill}>
-                <Play size={16} fill="currentColor" /> {run ? 'Rerun drill' : scenario.launchLabel}
+              <button type="button" className={run ? 'button primary' : 'button secondary'} id="execute-drill" onClick={executeDrill}>
+                <Play size={16} fill="currentColor" aria-hidden="true" /> {run ? 'Rerun drill' : scenario.launchLabel}
               </button>
             </div>
             <div className="reviewer-actions">
-              <button type="button" className="step-link" onClick={() => fileInput.current?.click()}>Open replay file</button>
+              <button type="button" className="step-link" aria-describedby="replay-import-status" onClick={() => fileInput.current?.click()}>Open replay file</button>
               <button type="button" className="step-link" onClick={() => {
-                importRequest.current++
+                cancelReplayImport()
                 loadReplay(readReplayFile(sampleReviewJson), true)
               }}>Open sample review</button>
-              {!run && <button type="button" className="step-link" onClick={() => openRestartSample()}>Open restart review</button>}
             </div>
+            <p id="replay-import-status" className={importStatus?.error ? 'import-status bad' : 'import-status'} role="status">{importStatus?.text}</p>
             <input ref={fileInput} type="file" accept=".json,application/json" aria-label="Choose a Ghost Drill replay file" hidden
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0]
@@ -309,7 +332,6 @@ export function App() {
           </div>
         </section>
 
-        <p className={importStatus?.error ? 'import-status bad' : 'import-status'} role="status">{importStatus?.text}</p>
         <section className={run ? 'summary review-summary' : 'summary'} id="drill-outcome" tabIndex={-1} aria-label="Drill outcome">
           <div className="summary-cell"><span className="eyebrow">Runbook execution</span>
             <strong aria-live="polite"><i className={`status-dot ${run ? 'good' : 'neutral'}`} />{run ? 'Rollback completed' : 'Ready to run'}</strong>
@@ -398,7 +420,10 @@ export function App() {
             {scenario.rollbackEditor === 'endpoint' && <div className="plan-editor">
               <h3>Edit rollback</h3>
               <p>{includeRestore ? restoreQueue.description : 'Add a step to point the queue back to gw-primary.'}</p>
-              <button type="button" className="button edit-button" disabled={!run} onClick={() => setIncludeRestore(!includeRestore)}>
+              <button type="button" className="button edit-button" disabled={!run} onClick={() => {
+                preserveWorkspaceEdit()
+                setIncludeRestore(!includeRestore)
+              }}>
                 {includeRestore ? <X size={16} /> : <Plus size={16} />}
                 {includeRestore ? 'Remove endpoint restore' : restoreQueue.title}
               </button>
@@ -410,7 +435,10 @@ export function App() {
               <summary>Edit scenario assumptions</summary>
               <label htmlFor="restoration-assumption">Restoration outcome · {affectedStep.title}</label>
               <select id="restoration-assumption" value={assumption}
-                onChange={(event) => setAssumption(event.currentTarget.value as ScenarioAssumption)}>
+                onChange={(event) => {
+                  preserveWorkspaceEdit()
+                  setAssumption(event.currentTarget.value as ScenarioAssumption)
+                }}>
                 {assumptionOptions(scenario).map((option) => <option key={option} value={option}>{assumptionLabels[option]}</option>)}
               </select>
               {assumption !== defaultAssumption(scenario) &&
@@ -422,8 +450,10 @@ export function App() {
                 <legend>Evaluate on the next run</legend>
                 {acceptanceRules(scenario).map((id) => (
                   <label key={id}>
-                    <input type="checkbox" checked={requirements.includes(id)} onChange={(event) =>
-                      setRequirements(event.currentTarget.checked ? [...requirements, id] : requirements.filter((item) => item !== id))} />
+                    <input type="checkbox" checked={requirements.includes(id)} onChange={(event) => {
+                      preserveWorkspaceEdit()
+                      setRequirements(event.currentTarget.checked ? [...requirements, id] : requirements.filter((item) => item !== id))
+                    }} />
                     {requirementName(id)}
                   </label>
                 ))}

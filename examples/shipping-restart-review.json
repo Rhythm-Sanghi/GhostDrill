@@ -1,0 +1,63 @@
+{
+  "format": "ghost-drill-replay",
+  "formatVersion": 3,
+  "reviewType": "restart",
+  "modelVersion": 1,
+  "scenario": "shipping-release",
+  "original": {
+    "actions": [
+      "restore-printing",
+      "release-batch",
+      "record-receipt",
+      "verify-recovery"
+    ],
+    "requirements": [
+      "at-most-once",
+      "recover-once",
+      "receipt-evidence"
+    ],
+    "releasePolicy": "repeat",
+    "boundaries": [
+      "before-effect",
+      "after-commit",
+      "after-ack",
+      "after-checkpoint"
+    ],
+    "observations": [
+      "standard"
+    ],
+    "restartPolicies": [
+      "checkpoint",
+      "beginning"
+    ],
+    "limit": 25
+  },
+  "revised": {
+    "actions": [
+      "restore-printing",
+      "release-batch",
+      "record-receipt",
+      "verify-recovery"
+    ],
+    "requirements": [
+      "at-most-once",
+      "recover-once",
+      "receipt-evidence"
+    ],
+    "releasePolicy": "stable-key",
+    "boundaries": [
+      "before-effect",
+      "after-commit",
+      "after-ack",
+      "after-checkpoint"
+    ],
+    "observations": [
+      "standard"
+    ],
+    "restartPolicies": [
+      "checkpoint",
+      "beginning"
+    ],
+    "limit": 25
+  }
+}

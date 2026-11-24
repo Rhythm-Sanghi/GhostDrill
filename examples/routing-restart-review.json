@@ -1,0 +1,53 @@
+{
+  "format": "ghost-drill-replay",
+  "formatVersion": 3,
+  "reviewType": "restart",
+  "modelVersion": 1,
+  "scenario": "routing-verification",
+  "original": {
+    "actions": [
+      "restore-routing",
+      "save-progress",
+      "verify-routing"
+    ],
+    "requirements": [
+      "recover-routing",
+      "verify-routing"
+    ],
+    "releasePolicy": "repeat",
+    "boundaries": [
+      "routing-checkpoint"
+    ],
+    "observations": [
+      "standard"
+    ],
+    "restartPolicies": [
+      "checkpoint",
+      "beginning"
+    ],
+    "limit": 25
+  },
+  "revised": {
+    "actions": [
+      "restore-routing",
+      "verify-routing",
+      "save-progress"
+    ],
+    "requirements": [
+      "recover-routing",
+      "verify-routing"
+    ],
+    "releasePolicy": "repeat",
+    "boundaries": [
+      "routing-checkpoint"
+    ],
+    "observations": [
+      "standard"
+    ],
+    "restartPolicies": [
+      "checkpoint",
+      "beginning"
+    ],
+    "limit": 25
+  }
+}

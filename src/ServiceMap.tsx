@@ -14,10 +14,11 @@ const printerLabels = {
   unknown: { text: 'Print status unknown', tone: 'warning', node: 'unobserved' },
 }
 
-export function ServiceMap({ snapshot, runLabel, onReturnToLatest }: {
+export function ServiceMap({ snapshot, runLabel, onReturnToLatest, onBackToComparison }: {
   snapshot: Snapshot
   runLabel?: string
   onReturnToLatest?: () => void
+  onBackToComparison?: () => void
 }) {
   const { state } = snapshot
   const printer = state.kind === 'warehouse' ? printerLabels[getCheck(snapshot, 'label-printing').status] : null
@@ -32,7 +33,12 @@ export function ServiceMap({ snapshot, runLabel, onReturnToLatest }: {
         <div className="map-context">
           <span className="eyebrow" id="map-run">{runLabel ?? (state.kind === 'dispatch' ? 'Dispatch network' : 'Warehouse network')}</span>
           <strong>{snapshot.title}</strong>
-          {onReturnToLatest && <button type="button" className="step-link" onClick={onReturnToLatest}>Return to latest run</button>}
+          {(onBackToComparison || onReturnToLatest) && (
+            <div className="map-actions">
+              {onBackToComparison && <button type="button" className="step-link" onClick={onBackToComparison}>Back to comparison</button>}
+              {onReturnToLatest && <button type="button" className="step-link" onClick={onReturnToLatest}>Return to latest run</button>}
+            </div>
+          )}
         </div>
         {state.kind === 'dispatch' && <DispatchTopology state={state} />}
         {state.kind === 'warehouse' && printer && <div className="topology">

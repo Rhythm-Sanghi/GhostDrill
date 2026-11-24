@@ -4,19 +4,21 @@ Ghost Drill is a browser-based network maintenance rehearsal for Kiroween 2026 F
 
 **[Live demo](https://rhythm-sanghi.github.io/GhostDrill/)**
 
+Download a Markdown rehearsal report to share the latest completed run, its evidence, and any comparison with a change reviewer.
+
 ## One-minute walkthrough
 
-1. Run **Warehouse Label Outage**. Rollback completes, but printing fails. **Inspect responsible step** in the label printing proof shows the switch to the backup gateway.
-2. Add **Restore label queue endpoint** and rerun. Open **Failed → Verified · View comparison**. Inspect **Before** to see the backup route in the previous run, then **After** to see the restored route. **Return to latest run** jumps back to the latest final snapshot.
+1. Run **Warehouse Label Outage**. Rollback completes, but printing fails. Open **View rollback proof** and use **Inspect responsible step** to see the switch to the backup gateway.
+2. Add **Restore label queue endpoint** and rerun. Open **Failed → Verified · View comparison**. Inspect **Before** and **After**, using **Back to comparison** after each snapshot. Download the rehearsal report from the comparison.
 3. Switch to **Dispatch Queue Rollback** and run it. The queue stays paused because reopening was attempted before the shipping connector was ready. Move **Restore shipping connector** up and rerun. The comparison shows both step orders and the verified result.
 
 Run **Missing Print Path Evidence** twice to see **Unknown → Unknown** and the missing reachability observation. **Reset** restores the supplied plan and clears recorded runs.
 
 ## Kiro contribution
 
-Kiro authored and implemented **Compare rollback runs** using Quick Spec. The repeated-step browser test uses Tab and Enter to replay both recorded snapshots. [Requirement 4](.kiro/specs/compare-rollback-runs/requirements.md#requirement-4-link-changed-check-evidence-to-recorded-snapshots) · [Evidence controls](src/Evidence.tsx) · [Browser tests](tests/drill.spec.ts)
+Kiro authored and implemented **Compare rollback runs** using Quick Spec. The repeated-step browser test uses Tab and Enter to replay both recorded snapshots. [Requirement 4](.kiro/specs/compare-rollback-runs/requirements.md#requirement-4-link-changed-check-evidence-to-recorded-snapshots) · [Evidence controls](src/Evidence.tsx) · [Browser test](tests/drill.spec.ts#L360)
 
-Rhythm Sanghi supplied the brief and Threadmark visual reference. OpenAI Codex built the initial rehearsal and verified service recovery, then delivered this release pass with phase-aware comparisons, the dispatch drill, browser verification, and Pages publishing. The root [.kiro](.kiro) folder contains both specs, steering, and the save hook.
+Rhythm Sanghi supplied the brief and Threadmark visual reference. OpenAI Codex built the rehearsal, verified service recovery, extended the comparison, and implemented the dispatch drill and downloadable report. The Kiro save hook is registered and its automatic execution remains unverified. [Kiro specs, steering, and hook](.kiro)
 
 ## Run locally
 

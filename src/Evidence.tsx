@@ -1,23 +1,21 @@
 import { Activity } from 'lucide-react'
+import type { ReactNode } from 'react'
 import type { CheckId, Phase } from './scenario'
-import { checkNames, getCheck, type CheckResult, type DrillRun, type Snapshot, type Verdict } from './simulator'
+import { checkNames, checkStatusLabels, evidenceSource, getCheck, type CheckResult, type DrillRun, type Snapshot, type Verdict } from './simulator'
 import type { ResolvedRunComparison, RunRef } from './comparison'
 
-const resultLabels = {
-  healthy: { text: 'Healthy', tone: 'good' },
-  unhealthy: { text: 'Unhealthy', tone: 'bad' },
-  unknown: { text: 'Unknown', tone: 'warning' },
-}
+const resultTones = { healthy: 'good', unhealthy: 'bad', unknown: 'warning' }
 const verdictTones: Record<Verdict, string> = { Verified: 'good', Failed: 'bad', Unknown: 'warning' }
 
-export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison, selectedRunRef, onSelectSnapshot }: {
+export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison, selectedRunRef, onSelectSnapshot, reportAction }: {
   snapshot: Snapshot
   requiredChecks: readonly CheckId[]
   runs: Record<RunRef, DrillRun | null>
   runLabels: Record<RunRef, string>
   comparison: ResolvedRunComparison | null
   selectedRunRef: RunRef
-  onSelectSnapshot: (id: string, runRef: RunRef) => void
+  onSelectSnapshot: (id: string, runRef: RunRef, fromComparison: boolean) => void
+  reportAction: ReactNode
 }) {
   const run = runs[selectedRunRef]
   const runLabel = runLabels[selectedRunRef]
@@ -27,18 +25,17 @@ export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison
     && run.snapshots.indexOf(firstFailure) <= run.snapshots.indexOf(snapshot)
 
   function renderResult(id: CheckId, phase: Phase, result: CheckResult, runRef: RunRef, side?: 'Before' | 'After') {
-    const { tone, text } = resultLabels[result.status]
+    const { status } = result
     const label = side ? `${side} · ${phase}` : phase
     const actionLabel = result.status === 'unhealthy' && phase === 'Rollback'
       && (id === 'label-printing' || id === 'dispatch-queue') ? 'Inspect responsible step' : 'View step'
-    const sourceId = 'stepId' in result ? result.stepId : undefined
-    const source = runs[runRef]?.snapshots.find(({ id }) => id === sourceId)
+    const source = evidenceSource(runs[runRef], result)
     return (
       <div className="proof-result" role="group" aria-label={label}>
-        <div className="proof-status"><span>{label}</span><strong className={tone}>{text}</strong></div>
+        <div className="proof-status"><span>{label}</span><strong className={resultTones[status]}>{checkStatusLabels[status]}</strong></div>
         <p>{result.reason}</p>
         {source && (
-          <button type="button" className="step-link" onClick={() => onSelectSnapshot(source.id, runRef)}
+          <button type="button" className="step-link" onClick={() => onSelectSnapshot(source.id, runRef, Boolean(side))}
             aria-label={`${actionLabel} for ${checkNames[id]} · ${label} · ${runLabels[runRef]}`}>
             {actionLabel}
           </button>
@@ -65,8 +62,8 @@ export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison
         )}
         {outageObserved && <p className="first-outage">First outage <strong>{firstFailure.phase} · {firstFailure.title}</strong></p>}
         {run && (
-          <section className="proof-group" aria-label="Rollback proof">
-            <h3 className="eyebrow">Rollback proof</h3>
+          <section className="proof-group" aria-labelledby="rollback-proof-heading">
+            <h3 className="eyebrow" id="rollback-proof-heading" tabIndex={-1}>Rollback proof</h3>
             <p className="proof-run-label">{runLabel}</p>
             {run.comparisons.length === 0 && <p>No required checks are configured.</p>}
             {run.comparisons.map(({ id, baseline, rollback }) => (
@@ -87,6 +84,7 @@ export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison
               {' \u2192 '}
               <strong className={verdictTones[comparison.currentVerdict]}>{comparison.currentVerdict}</strong>
             </p>
+            {reportAction}
             {comparison.priorVerdict === comparison.currentVerdict &&
               <p className="comparison-note">The final verdict stayed {comparison.currentVerdict}.</p>}
             {!comparison.changedChecks.length &&

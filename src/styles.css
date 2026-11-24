@@ -18,7 +18,7 @@
 *, *::before, *::after { box-sizing: border-box; }
 body { margin: 0; min-width: 280px; }
 button, select { font: inherit; }
-button:focus-visible, select:focus-visible, .map:focus-visible, #run-comparison-heading:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+button:focus-visible, select:focus-visible, .map:focus-visible, .proof-group h3:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 button:disabled { cursor: default; }
 svg { flex: none; }
 h1, h2, h3, h4, p { margin: 0; }
@@ -96,6 +96,7 @@ h1 { font-size: clamp(2.15rem, 4.4vw, 3.55rem); font-weight: 650; letter-spacing
 .map-context { display: grid; justify-items: start; gap: 5px; padding: 16px 15px 0; }
 .map-context > * { background: #15191a; }
 .map-context strong { font-size: .875rem; font-weight: 590; }
+.map-actions { display: flex; flex-wrap: wrap; gap: 0 12px; }
 .dispatch-topology { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 8px; padding: 15px; }
 .dispatch-dependency { font-size: .75rem; color: var(--muted); }
 .dispatch-dependency span { color: var(--accent); }
@@ -192,7 +193,10 @@ h1 { font-size: clamp(2.15rem, 4.4vw, 3.55rem); font-weight: 650; letter-spacing
 
 .comparison-verdict { font-size: .875rem; }
 .comparison-jump { justify-self: start; font-size: .875rem; }
-#run-comparison-heading { scroll-margin-top: 18px; }
+.map, .proof-group h3 { scroll-margin-top: 18px; }
+.report-action { grid-column: 1 / -1; min-width: 0; }
+.report-download { display: inline-flex; align-items: center; gap: 6px; font-size: .875rem; }
+.report-action p { color: var(--muted); font-size: .8125rem; }
 .proof-group > .comparison-note { grid-column: 1 / -1; font-size: .8125rem; }
 .comparison-phase { display: grid; gap: 8px; }
 .comparison-phase + .comparison-phase { padding-top: 8px; border-top: 1px solid var(--border); }

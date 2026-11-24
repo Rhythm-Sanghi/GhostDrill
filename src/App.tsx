@@ -1,15 +1,22 @@
-import { Activity, ArrowDown, ArrowUp, ChevronRight, ClipboardList, FlaskConical, Play, Plus, RotateCcw, X } from 'lucide-react'
+import { Activity, ArrowDown, ArrowUp, ChevronRight, ClipboardList, Download, FlaskConical, Play, Plus, RotateCcw, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { createRollbackPlan, restoreQueue, scenarios, warehouseOutage, type DrillScenario, type Phase, type RunbookStep } from './scenario'
-import { createBaselineSnapshot, getCheck, runDrill, type DrillRun } from './simulator'
+import { createBaselineSnapshot, findRecordedStep, getCheck, runDrill, type DrillRun } from './simulator'
 import { compareRuns, resolveComparisonTitles, type ResolvedRunComparison, type RunRef } from './comparison'
 import { ServiceMap } from './ServiceMap'
 import { Evidence } from './Evidence'
 import { describeFinalService, verificationNotes } from './outcome'
+import { buildRehearsalReport, downloadRehearsalReport, formatRunId } from './report'
 
 const phases: readonly Phase[] = ['Baseline', 'Change', 'Rollback']
 const verdictTones = { Verified: 'good', Failed: 'bad', Unknown: 'warning' }
+
+function focusSection(id: string) {
+  const target = document.getElementById(id)
+  target?.focus({ preventScroll: true })
+  target?.scrollIntoView({ block: 'start', behavior: 'instant' })
+}
 
 export function App() {
   const [scenario, setScenario] = useState<DrillScenario>(warehouseOutage)
@@ -17,25 +24,25 @@ export function App() {
   const [draftOrder, setDraftOrder] = useState<readonly RunbookStep[] | null>(null)
   const [run, setRun] = useState<DrillRun | null>(null)
   const [previousRun, setPreviousRun] = useState<DrillRun | null>(null)
-  const [selectedRef, setSelectedRef] = useState<{ run: RunRef; id: string }>({ run: 'current', id: 'baseline' })
+  const [selectedRef, setSelectedRef] = useState<{ run: RunRef; id: string; fromComparison?: boolean }>({ run: 'current', id: 'baseline' })
   const [runCount, setRunCount] = useState(0)
   const initialSnapshot = run?.snapshots[0] ?? createBaselineSnapshot(scenario)
   const plan = draftOrder ?? createRollbackPlan(scenario, includeRestore)
   const recordedRuns = { current: run, prior: previousRun }
   const activeRun = recordedRuns[selectedRef.run]
   const runLabels = {
-    current: `Latest run · Run ${String(runCount).padStart(2, '0')}`,
-    prior: `Viewing previous run · Run ${String(runCount - 1).padStart(2, '0')}`,
+    current: `Latest run · ${formatRunId(runCount)}`,
+    prior: `Viewing previous run · ${formatRunId(runCount - 1)}`,
   }
   const inspectedRunLabel = runLabels[selectedRef.run]
-  const selected = activeRun?.snapshots.find(({ id }) => id === selectedRef.id) ?? initialSnapshot
+  const selected = findRecordedStep(activeRun, selectedRef.id) ?? initialSnapshot
   const pending = Boolean(run && (run.executedRollbackStepIds.length !== plan.length
     || plan.some(({ id }, index) => id !== run.executedRollbackStepIds[index])))
   const serviceOutcome = run && describeFinalService(run)
   const comparison = useMemo<ResolvedRunComparison | null>(() => {
     if (!previousRun || !run) return null
     return resolveComparisonTitles(compareRuns(previousRun, run), (id, ref) =>
-      (ref === 'prior' ? previousRun : run).snapshots.find((snapshot) => snapshot.id === id)?.title ?? id)
+      findRecordedStep(ref === 'prior' ? previousRun : run, id)?.title ?? id)
   }, [previousRun, run])
   const steps = [
     initialSnapshot,
@@ -75,23 +82,21 @@ export function App() {
     clearRun()
   }
 
-  function selectSnapshot(id: string, runRef: RunRef = 'current') {
-    flushSync(() => setSelectedRef({ run: runRef, id }))
+  function selectSnapshot(id: string, runRef: RunRef, fromComparison: boolean) {
+    flushSync(() => setSelectedRef({ run: runRef, id, fromComparison }))
     const step = runRef === 'current' && document.getElementById(`step-${id}`)
-    const target = step || document.getElementById('service-map')
-    target?.focus()
+    if (step && !window.matchMedia('(max-width: 680px)').matches) step.focus()
+    else focusSection('service-map')
   }
 
   function returnToLatest() {
     if (!run) return
     flushSync(() => setSelectedRef({ run: 'current', id: run.finalSnapshot.id }))
-    document.getElementById('service-map')?.focus()
+    focusSection('service-map')
   }
 
   function openComparison() {
-    const heading = document.getElementById('run-comparison-heading')
-    heading?.focus({ preventScroll: true })
-    heading?.scrollIntoView({ block: 'start', behavior: 'instant' })
+    focusSection('run-comparison-heading')
   }
 
   function moveStep(index: number, direction: number) {
@@ -102,6 +107,21 @@ export function App() {
     nextPlan.splice(destination, 0, step)
     setDraftOrder(nextPlan)
   }
+
+  function downloadReport() {
+    if (!run) return
+    const previous = previousRun ? { number: runCount - 1, run: previousRun } : undefined
+    downloadRehearsalReport(buildRehearsalReport(scenario.title, { number: runCount, run }, previous))
+  }
+
+  const reportAction = run && (
+    <div className="report-action">
+      <button type="button" className="step-link report-download" onClick={downloadReport} aria-describedby="report-scope">
+        <Download size={15} aria-hidden="true" /> Download rehearsal report
+      </button>
+      <p id="report-scope">Latest completed run · {formatRunId(runCount)}{pending && ' · Draft edits excluded'}</p>
+    </div>
+  )
 
   return (
     <>
@@ -149,6 +169,8 @@ export function App() {
             {comparison && <button type="button" className="step-link comparison-jump" onClick={openComparison}>
               {comparison.priorVerdict} → {comparison.currentVerdict} · View comparison
             </button>}
+            {!comparison && run?.verdict === 'Failed' && <button type="button" className="step-link comparison-jump"
+              onClick={() => focusSection('rollback-proof-heading')}>View rollback proof</button>}
           </div>
           <div className="summary-cell summary-detail">
             <span className="eyebrow">{run ? 'Final service observation' : 'Starting state'}</span>
@@ -156,6 +178,7 @@ export function App() {
               ? <strong className={serviceOutcome.tone}>{serviceOutcome.description}</strong>
               : <span className="summary-note">{scenario.startingState}</span>}
             {pending && <span className="summary-note warning">Showing the previous plan</span>}
+            {!comparison && reportAction}
           </div>
         </section>
 
@@ -210,9 +233,11 @@ export function App() {
           </section>
 
           <ServiceMap snapshot={selected} runLabel={activeRun ? inspectedRunLabel : undefined}
-            onReturnToLatest={selectedRef.run === 'prior' ? returnToLatest : undefined} />
+            onReturnToLatest={selectedRef.run === 'prior' ? returnToLatest : undefined}
+            onBackToComparison={selectedRef.fromComparison ? openComparison : undefined} />
           <Evidence snapshot={selected} requiredChecks={scenario.requiredChecks} runs={recordedRuns} runLabels={runLabels}
-            comparison={comparison} selectedRunRef={selectedRef.run} onSelectSnapshot={selectSnapshot} />
+            comparison={comparison} selectedRunRef={selectedRef.run} onSelectSnapshot={selectSnapshot}
+            reportAction={reportAction} />
         </div>
 
         <footer className="workspace-footer"><FlaskConical size={15} aria-hidden="true" /> Synthetic data <span>·</span> {scenario.scope}</footer>

@@ -1,6 +1,6 @@
 import { expect, test, type Locator } from '@playwright/test'
 
-test('the built drill can be diagnosed, fixed, and reset', async ({ page }) => {
+test('the built drill can be diagnosed, fixed, and reset', async ({ page }, testInfo) => {
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
   const assets: { type: string; status: number; path: string }[] = []
@@ -47,7 +47,7 @@ test('the built drill can be diagnosed, fixed, and reset', async ({ page }) => {
 
   await evidence.getByRole('button', { name: /Inspect responsible step for Label printing/ }).click()
   const switchQueue = timeline.getByRole('button', { name: 'Switch queue to backup' })
-  await expect(switchQueue).toBeFocused()
+  await expect(testInfo.project.name === 'mobile' ? map : switchQueue).toBeFocused()
   await expect(switchQueue).toHaveAttribute('aria-current', 'step')
   await expect(map.getByText('Change snapshot')).toBeVisible()
   await expect(map.getByText('Path reachable', { exact: true })).toHaveCount(1)
@@ -154,14 +154,19 @@ test('the main flow works using the keyboard', async ({ page }, testInfo) => {
   await expect(launch).toHaveCSS('outline-style', 'solid')
   await page.keyboard.press('Enter')
   await expect(run.getByText('Service still down')).toBeVisible()
-  for (let index = 0; index < 7; index++) await page.keyboard.press('Tab')
+  await page.keyboard.press('Tab')
+  await expect(run.getByRole('button', { name: 'View rollback proof' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('heading', { name: 'Rollback proof' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Tab')
   await expect(page.getByRole('button', { name: /Inspect responsible step for Label printing/ })).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(page.getByRole('button', { name: 'Switch queue to backup' })).toBeFocused()
   for (let index = 0; index < 3; index++) await page.keyboard.press('Tab')
   await expect(page.getByRole('button', { name: 'Restore label queue endpoint' })).toBeFocused()
   await page.keyboard.press('Space')
-  for (let index = 0; index < 5; index++) await page.keyboard.press('Shift+Tab')
+  for (let index = 0; index < 7; index++) await page.keyboard.press('Shift+Tab')
   await expect(page.getByRole('button', { name: 'Rerun drill' })).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(run.getByText('Service recovered')).toBeVisible()
@@ -216,7 +221,7 @@ test('two completed runs render a Failed to Verified comparison with the added s
   expect(pageErrors).toEqual([])
 })
 
-test('changed-check Before links open the prior run and After links open the current run', async ({ page }) => {
+test('changed-check Before links open the prior run and After links open the current run', async ({ page }, testInfo) => {
   await page.goto('./')
 
   const evidence = page.getByRole('region', { name: 'Evidence' })
@@ -250,7 +255,9 @@ test('changed-check Before links open the prior run and After links open the cur
   await expect(printingProof.getByText('Backup gateway cannot reach the print service.')).toBeVisible()
 
   await printing.getByRole('group', { name: 'After · Rollback' }).getByRole('button').click()
-  await expect(timeline.getByRole('button', { name: 'Restore label queue endpoint' })).toBeFocused()
+  await expect(testInfo.project.name === 'mobile'
+    ? map
+    : timeline.getByRole('button', { name: 'Restore label queue endpoint' })).toBeFocused()
   await expect(map.getByText('Latest run · Run 02')).toBeVisible()
   await expect(map.getByText('Rollback snapshot')).toBeVisible()
   await expect(map.getByText('gw-primary', { exact: true })).toBeVisible()

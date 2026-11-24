@@ -4,6 +4,8 @@ export type CheckResult =
   | { status: 'healthy' | 'unhealthy'; reason: string; stepId: string }
   | { status: 'unknown'; reason: string }
 
+export const checkStatusLabels = { healthy: 'Healthy', unhealthy: 'Unhealthy', unknown: 'Unknown' } as const
+
 export const checkNames: Readonly<Record<CheckId, string>> = {
   'label-printing': 'Label printing',
   'queue-endpoint': 'Queue endpoint',
@@ -192,3 +194,11 @@ export function runDrill(scenario: DrillScenario, rollbackPlan: readonly Runbook
 }
 
 export type DrillRun = ReturnType<typeof runDrill>
+
+export function findRecordedStep(run: DrillRun | null, id: string) {
+  return run?.snapshots.find((snapshot) => snapshot.id === id)
+}
+
+export function evidenceSource(run: DrillRun | null, result: CheckResult) {
+  return 'stepId' in result ? findRecordedStep(run, result.stepId) : undefined
+}

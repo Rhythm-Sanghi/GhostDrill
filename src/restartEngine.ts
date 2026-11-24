@@ -77,7 +77,8 @@ export function executeRestart(scenario: ScenarioId, revision: RestartRevision, 
     const resumeAt = revision.actions[next]
     cursor = next
     resumed = true
-    record('Restart', `${testCase.restart === 'checkpoint' ? 'The saved checkpoint points to' : 'The operator chose to start from'} ${resumeAt ? actions[resumeAt] : 'the end of the runbook'}. Downstream effects and saved receipts survived.`, resumeAt ?? null)
+    const retained = scenario === 'shipping-release' ? 'Downstream effects and saved receipts survived.' : 'Saved progress and verification evidence survived.'
+    record('Restart', `${testCase.restart === 'checkpoint' ? 'The saved checkpoint points to' : 'The operator chose to start from'} ${resumeAt ? actions[resumeAt] : 'the end of the runbook'}. ${retained}`, resumeAt ?? null)
     const verificationIndex = revision.actions.indexOf('verify-routing')
     if (boundary === 'routing-checkpoint' && !durable.routingVerified && verificationIndex >= 0 && next > verificationIndex) {
       verificationEvent = record('Required verification skipped', 'The saved restart location is past the routing verification action.', 'verify-routing')
@@ -155,7 +156,7 @@ export function executeRestart(scenario: ScenarioId, revision: RestartRevision, 
     cursor++
   }
 
-  const end = record('Execution ended', `${effects.length} downstream releases. Service ${serviceRecovered ? 'recovered' : 'down'}.`, null)
+  const end = record('Execution ended', `${scenario === 'shipping-release' ? `${effects.length} downstream releases. ` : ''}Service ${serviceRecovered ? 'recovered' : 'down'}.`, null)
   const boundaryReached = !('boundary' in testCase) || resumed
   function evaluate(id: RequirementId): Finding {
     switch (id) {

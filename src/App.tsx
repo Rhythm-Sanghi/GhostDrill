@@ -13,6 +13,9 @@ import { buildReplayFile, nextRunNumber, readReplayFile, replayByteLimit, sample
 import { Contingencies } from './Contingencies'
 import { acceptanceRules, compareAcceptance, requirementName, sameRequirements, type AcceptanceEvidence, type AcceptanceRuleId } from './acceptance'
 import { AcceptanceChecks, acceptanceTones } from './AcceptanceChecks'
+import { RestartReview } from './RestartReview'
+import { looksLikeRestartReplay, readRestartReplay, sampleRestartReplay, type RestartReplay } from './restartReplay'
+import type { ScenarioId } from './restartModel'
 
 const phases: readonly Phase[] = ['Baseline', 'Change', 'Rollback']
 const verdictTones = { Verified: 'good', Failed: 'bad', Unknown: 'warning' }
@@ -24,6 +27,7 @@ function focusSection(id: string) {
 }
 
 export function App() {
+  const [restart, setRestart] = useState<{ key: number; replay: RestartReplay } | null>(null)
   const [scenario, setScenario] = useState<DrillScenario>(warehouseOutage)
   const [includeRestore, setIncludeRestore] = useState(false)
   const [draftOrder, setDraftOrder] = useState<readonly RunbookStep[] | null>(null)
@@ -177,6 +181,7 @@ export function App() {
   function loadReplay(replay: ReturnType<typeof readReplayFile>, sample = false) {
     const latest = replay.latest.run
     flushSync(() => {
+      setRestart(null)
       setScenario(replay.scenario)
       setRun(latest)
       setPreviousRun(replay.previous?.run ?? null)
@@ -193,13 +198,30 @@ export function App() {
     focusSection('drill-outcome')
   }
 
+  function enterRestart(replay: RestartReplay, message?: string) {
+    const key = ++importRequest.current
+    flushSync(() => {
+      setRestart({ key, replay })
+      setImportStatus(message ? { text: message } : null)
+    })
+    document.getElementById('restart-heading')?.focus({ preventScroll: true })
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }
+
+  function openRestartSample(scenario: ScenarioId = 'shipping-release') {
+    enterRestart(sampleRestartReplay(scenario))
+  }
+
   async function openReplay(file: File) {
     const request = ++importRequest.current
     try {
       if (file.size > replayByteLimit) throw new Error('This replay exceeds the 16 KB limit.')
       const json = await file.text()
       if (request !== importRequest.current) return
-      loadReplay(readReplayFile(json))
+      let value: unknown
+      try { value = JSON.parse(json) } catch { throw new Error('This file is not readable JSON. Choose a Ghost Drill replay file.') }
+      if (looksLikeRestartReplay(value)) enterRestart(readRestartReplay(json), 'Restart replay opened. Evidence rebuilt locally.')
+      else loadReplay(readReplayFile(json))
     } catch (error) {
       if (request !== importRequest.current) return
       setImportStatus({ error: true, text: error instanceof Error ? error.message : 'The replay file could not be read.' })
@@ -228,6 +250,16 @@ export function App() {
       <p id="report-scope">Latest completed run · {formatRunId(runCount)}{pending && ' · Draft edits excluded'}</p>
     </div>
   )
+
+  if (restart) {
+    return <RestartReview key={restart.key} initial={restart.replay}
+      onBack={() => {
+        importRequest.current++
+        flushSync(() => { setRestart(null); setImportStatus(null) })
+        focusSection('execute-drill')
+      }}
+      onScenario={openRestartSample} onOpen={(file) => void openReplay(file)} status={importStatus} />
+  }
 
   return (
     <>
@@ -266,6 +298,7 @@ export function App() {
                 importRequest.current++
                 loadReplay(readReplayFile(sampleReviewJson), true)
               }}>Open sample review</button>
+              {!run && <button type="button" className="step-link" onClick={() => openRestartSample()}>Open restart review</button>}
             </div>
             <input ref={fileInput} type="file" accept=".json,application/json" aria-label="Choose a Ghost Drill replay file" hidden
               onChange={(event) => {

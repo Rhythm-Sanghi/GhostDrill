@@ -1,10 +1,11 @@
 import { compareRuns } from './comparison.ts'
 import { verificationNotes } from './outcome.ts'
+import { assumptionLabels, type ContingencyResult, type RecordedDrill } from './rehearsal.ts'
 import { checkNames, checkStatusLabels, evidenceSource, findRecordedStep, type CheckResult, type DrillRun } from './simulator.ts'
 
 interface CompletedRun {
   number: number
-  run: DrillRun
+  run: DrillRun & Partial<Pick<RecordedDrill, 'assumption'>>
 }
 
 export function formatRunId(number: number) {
@@ -22,7 +23,7 @@ function evidenceLine(label: string, result: CheckResult, run: DrillRun) {
   return `- ${label} — **${checkStatusLabels[result.status]}**. ${result.reason}${title ? ` Recorded source step — ${title}.` : ''}`
 }
 
-export function buildRehearsalReport(scenarioTitle: string, latest: CompletedRun, previous?: CompletedRun) {
+export function buildRehearsalReport(scenarioTitle: string, latest: CompletedRun, previous?: CompletedRun, contingencies: readonly ContingencyResult[] = []) {
   const { run } = latest
   const latestId = formatRunId(latest.number)
   const lines = [
@@ -36,6 +37,7 @@ export function buildRehearsalReport(scenarioTitle: string, latest: CompletedRun
     '',
     '- **Runbook execution** — Rollback completed',
     `- **Verification verdict** — ${run.verdict}`,
+    ...(run.assumption ? [`- **Recorded assumption** — ${assumptionLabels[run.assumption]}`] : []),
     ...verificationNotes(run).map((note) => `- ${note}`),
     '',
     '### Recorded rollback order',
@@ -57,6 +59,9 @@ export function buildRehearsalReport(scenarioTitle: string, latest: CompletedRun
       '', '## Run comparison', '',
       `- **Previous completed run** — ${priorId} · ${comparison.priorVerdict}`,
       `- **Verdict transition** — ${comparison.priorVerdict} → ${comparison.currentVerdict}`,
+      ...(prior.assumption && run.assumption && prior.assumption !== run.assumption
+        ? [`- **Assumption changed** — ${assumptionLabels[prior.assumption]} → ${assumptionLabels[run.assumption]}`]
+        : []),
       '', `### Previous rollback order · ${priorId}`, '', ...rollbackOrder(prior),
       '', `### Latest rollback order · ${latestId}`, '', ...rollbackOrder(run),
       '', '### Rollback actions added or removed', '',
@@ -75,6 +80,13 @@ export function buildRehearsalReport(scenarioTitle: string, latest: CompletedRun
     }
   }
 
+  if (contingencies.length) {
+    lines.push('', '## Contingency rehearsals', '', `Original ${latestId} verdict — **${run.verdict}**. Each alternate used the same recorded rollback order.`, '')
+    for (const result of contingencies) {
+      lines.push(`- **${result.verdict}** — ${assumptionLabels[result.assumption]}. ${result.title ? `Affected action — ${result.title}. ` : ''}${result.evidence}`)
+    }
+  }
+
   return {
     filename: `ghost-drill-${run.scenarioId}-rehearsal-${latestId.toLowerCase().replace(' ', '-')}.md`,
     markdown: `${lines.join('\n').trimEnd()}\n`,
@@ -82,7 +94,11 @@ export function buildRehearsalReport(scenarioTitle: string, latest: CompletedRun
 }
 
 export function downloadRehearsalReport({ filename, markdown }: ReturnType<typeof buildRehearsalReport>) {
-  const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }))
+  downloadFile(filename, markdown, 'text/markdown;charset=utf-8')
+}
+
+export function downloadFile(filename: string, content: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }))
   const link = document.createElement('a')
   link.href = url
   link.download = filename

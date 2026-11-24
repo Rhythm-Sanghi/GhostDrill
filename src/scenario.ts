@@ -22,7 +22,7 @@ type Action =
   | { type: 'set-print-path'; endpoint: Endpoint; reachability: Reachability }
   | { type: 'pause-dispatch' }
   | { type: 'reopen-dispatch' }
-  | { type: 'restore-connector' }
+  | { type: 'restore-connector'; ready?: boolean }
 
 export interface RunbookStep {
   id: string

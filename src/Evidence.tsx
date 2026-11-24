@@ -7,7 +7,7 @@ import type { ResolvedRunComparison, RunRef } from './comparison'
 const resultTones = { healthy: 'good', unhealthy: 'bad', unknown: 'warning' }
 const verdictTones: Record<Verdict, string> = { Verified: 'good', Failed: 'bad', Unknown: 'warning' }
 
-export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison, selectedRunRef, onSelectSnapshot, reportAction }: {
+export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison, selectedRunRef, onSelectSnapshot, reportAction, assumptionChange }: {
   snapshot: Snapshot
   requiredChecks: readonly CheckId[]
   runs: Record<RunRef, DrillRun | null>
@@ -16,6 +16,7 @@ export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison
   selectedRunRef: RunRef
   onSelectSnapshot: (id: string, runRef: RunRef, fromComparison: boolean) => void
   reportAction: ReactNode
+  assumptionChange?: { previous: string; latest: string }
 }) {
   const run = runs[selectedRunRef]
   const runLabel = runLabels[selectedRunRef]
@@ -85,6 +86,13 @@ export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison
               <strong className={verdictTones[comparison.currentVerdict]}>{comparison.currentVerdict}</strong>
             </p>
             {reportAction}
+            {assumptionChange && (
+              <div className="comparison-diff comparison-order">
+                <h4 className="eyebrow">Assumption changed</h4>
+                <p>Previous run · {assumptionChange.previous}</p>
+                <p>Latest run · {assumptionChange.latest}</p>
+              </div>
+            )}
             {comparison.priorVerdict === comparison.currentVerdict &&
               <p className="comparison-note">The final verdict stayed {comparison.currentVerdict}.</p>}
             {!comparison.changedChecks.length &&

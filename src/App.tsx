@@ -1,13 +1,16 @@
 import { Activity, ArrowDown, ArrowUp, ChevronRight, ClipboardList, Download, FlaskConical, Play, Plus, RotateCcw, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { createRollbackPlan, restoreQueue, scenarios, warehouseOutage, type DrillScenario, type Phase, type RunbookStep } from './scenario'
-import { createBaselineSnapshot, findRecordedStep, getCheck, runDrill, type DrillRun } from './simulator'
+import { createBaselineSnapshot, findRecordedStep, getCheck } from './simulator'
 import { compareRuns, resolveComparisonTitles, type ResolvedRunComparison, type RunRef } from './comparison'
 import { ServiceMap } from './ServiceMap'
 import { Evidence } from './Evidence'
 import { describeFinalService, verificationNotes } from './outcome'
-import { buildRehearsalReport, downloadRehearsalReport, formatRunId } from './report'
+import { buildRehearsalReport, downloadFile, downloadRehearsalReport, formatRunId } from './report'
+import { assumptionLabels, assumptionOptions, defaultAssumption, recordDrill, recordedPlan, replayContingencies, restorationStep, type RecordedDrill, type ScenarioAssumption } from './rehearsal'
+import { buildReplayFile, readReplayFile, replayByteLimit } from './replay'
+import { Contingencies } from './Contingencies'
 
 const phases: readonly Phase[] = ['Baseline', 'Change', 'Rollback']
 const verdictTones = { Verified: 'good', Failed: 'bad', Unknown: 'warning' }
@@ -22,8 +25,14 @@ export function App() {
   const [scenario, setScenario] = useState<DrillScenario>(warehouseOutage)
   const [includeRestore, setIncludeRestore] = useState(false)
   const [draftOrder, setDraftOrder] = useState<readonly RunbookStep[] | null>(null)
-  const [run, setRun] = useState<DrillRun | null>(null)
-  const [previousRun, setPreviousRun] = useState<DrillRun | null>(null)
+  const [run, setRun] = useState<RecordedDrill | null>(null)
+  const [previousRun, setPreviousRun] = useState<RecordedDrill | null>(null)
+  const [assumption, setAssumption] = useState<ScenarioAssumption>(defaultAssumption(warehouseOutage))
+  const [contingencies, setContingencies] = useState<readonly ScenarioAssumption[]>([])
+  const [localReplay, setLocalReplay] = useState(false)
+  const [importStatus, setImportStatus] = useState<{ text: string; error?: boolean } | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
+  const importRequest = useRef(0)
   const [selectedRef, setSelectedRef] = useState<{ run: RunRef; id: string; fromComparison?: boolean }>({ run: 'current', id: 'baseline' })
   const [runCount, setRunCount] = useState(0)
   const initialSnapshot = run?.snapshots[0] ?? createBaselineSnapshot(scenario)
@@ -37,7 +46,13 @@ export function App() {
   const inspectedRunLabel = runLabels[selectedRef.run]
   const selected = findRecordedStep(activeRun, selectedRef.id) ?? initialSnapshot
   const pending = Boolean(run && (run.executedRollbackStepIds.length !== plan.length
-    || plan.some(({ id }, index) => id !== run.executedRollbackStepIds[index])))
+    || plan.some(({ id }, index) => id !== run.executedRollbackStepIds[index]) || run.assumption !== assumption))
+  const affectedStep = restorationStep(scenario)
+  const contingencyResults = useMemo(() => run && contingencies.length ? replayContingencies(scenario, run, contingencies) : [],
+    [scenario, run, contingencies])
+  const assumptionChange = previousRun && run && previousRun.assumption !== run.assumption
+    ? { previous: assumptionLabels[previousRun.assumption], latest: assumptionLabels[run.assumption] }
+    : undefined
   const serviceOutcome = run && describeFinalService(run)
   const comparison = useMemo<ResolvedRunComparison | null>(() => {
     if (!previousRun || !run) return null
@@ -54,14 +69,22 @@ export function App() {
   }
 
   function executeDrill() {
+    importRequest.current++
+    setImportStatus(null)
+    setContingencies([])
     setPreviousRun(run)
-    const nextRun = runDrill(scenario, plan)
+    const nextRun = recordDrill(scenario, plan, assumption)
     setRun(nextRun)
     setSelectedRef({ run: 'current', id: nextRun.finalSnapshot.id })
     setRunCount((count) => count + 1)
   }
 
-  function clearRun() {
+  function clearRun(nextScenario = scenario) {
+    importRequest.current++
+    setImportStatus(null)
+    setLocalReplay(false)
+    setAssumption(defaultAssumption(nextScenario))
+    setContingencies([])
     setIncludeRestore(false)
     setDraftOrder(null)
     setRun(null)
@@ -79,7 +102,7 @@ export function App() {
     const nextScenario = scenarios.find((entry) => entry.id === id)
     if (!nextScenario || nextScenario.id === scenario.id) return
     setScenario(nextScenario)
-    clearRun()
+    clearRun(nextScenario)
   }
 
   function selectSnapshot(id: string, runRef: RunRef, fromComparison: boolean) {
@@ -111,14 +134,63 @@ export function App() {
   function downloadReport() {
     if (!run) return
     const previous = previousRun ? { number: runCount - 1, run: previousRun } : undefined
-    downloadRehearsalReport(buildRehearsalReport(scenario.title, { number: runCount, run }, previous))
+    downloadRehearsalReport(buildRehearsalReport(scenario.title, { number: runCount, run }, previous, contingencyResults))
+  }
+
+  function exportReplay() {
+    if (!run) return
+    const previous = previousRun ? { number: runCount - 1, run: previousRun } : undefined
+    const { filename, json } = buildReplayFile(scenario, { number: runCount, run }, previous, contingencies)
+    downloadFile(filename, json, 'application/json')
+  }
+
+  async function openReplay(file: File) {
+    const request = ++importRequest.current
+    try {
+      if (file.size > replayByteLimit) throw new Error('This replay exceeds the 16 KB limit.')
+      const json = await file.text()
+      if (request !== importRequest.current) return
+      const replay = readReplayFile(json)
+      const latest = replay.latest.run
+      flushSync(() => {
+        setScenario(replay.scenario)
+        setRun(latest)
+        setPreviousRun(replay.previous?.run ?? null)
+        setRunCount(replay.latest.number)
+        setAssumption(latest.assumption)
+        setIncludeRestore(latest.executedRollbackStepIds.includes(restoreQueue.id))
+        setDraftOrder(replay.scenario.rollbackEditor === 'order' ? recordedPlan(replay.scenario, latest) : null)
+        setSelectedRef({ run: 'current', id: latest.finalSnapshot.id })
+        setContingencies(replay.contingencies)
+        setLocalReplay(true)
+        setImportStatus({ text: `Replay opened. ${formatRunId(replay.latest.number)} rebuilt as ${latest.verdict}.` })
+      })
+      focusSection('drill-outcome')
+    } catch (error) {
+      if (request !== importRequest.current) return
+      setImportStatus({ error: true, text: error instanceof Error ? error.message : 'The replay file could not be read.' })
+    }
+  }
+
+  function rehearseContingencies() {
+    if (!run) return
+    const cases = contingencies.length ? contingencies : assumptionOptions(scenario).filter((option) => option !== run.assumption)
+    flushSync(() => setContingencies([...cases]))
+    focusSection('contingencies-heading')
   }
 
   const reportAction = run && (
     <div className="report-action">
-      <button type="button" className="step-link report-download" onClick={downloadReport} aria-describedby="report-scope">
-        <Download size={15} aria-hidden="true" /> Download rehearsal report
-      </button>
+      <div className="report-actions">
+        <button type="button" className="step-link report-download" onClick={downloadReport} aria-describedby="report-scope report-description">
+          <Download size={15} aria-hidden="true" /> Download rehearsal report
+        </button>
+        <p id="report-description">Markdown for a change ticket.</p>
+        <button type="button" className="step-link report-download" onClick={exportReplay} aria-describedby="report-scope replay-description">
+          <Download size={15} aria-hidden="true" /> Export replay file
+        </button>
+        <p id="replay-description">JSON a reviewer can open in Ghost Drill.</p>
+      </div>
       <p id="report-scope">Latest completed run · {formatRunId(runCount)}{pending && ' · Draft edits excluded'}</p>
     </div>
   )
@@ -154,10 +226,18 @@ export function App() {
                 <Play size={16} fill="currentColor" /> {run ? 'Rerun drill' : scenario.launchLabel}
               </button>
             </div>
+            <button type="button" className="step-link" onClick={() => fileInput.current?.click()}>Open replay file</button>
+            <input ref={fileInput} type="file" accept=".json,application/json" aria-label="Choose a Ghost Drill replay file" hidden
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0]
+                event.currentTarget.value = ''
+                if (file) void openReplay(file)
+              }} />
           </div>
         </section>
 
-        <section className="summary" aria-label="Drill outcome">
+        <p className={importStatus?.error ? 'import-status bad' : 'import-status'} role="status">{importStatus?.text}</p>
+        <section className="summary" id="drill-outcome" tabIndex={-1} aria-label="Drill outcome">
           <div className="summary-cell"><span className="eyebrow">Runbook execution</span>
             <strong aria-live="polite"><i className={`status-dot ${run ? 'good' : 'neutral'}`} />{run ? 'Rollback completed' : 'Ready to run'}</strong>
           </div>
@@ -178,9 +258,17 @@ export function App() {
               ? <strong className={serviceOutcome.tone}>{serviceOutcome.description}</strong>
               : <span className="summary-note">{scenario.startingState}</span>}
             {pending && <span className="summary-note warning">Showing the previous plan</span>}
+            {localReplay && <span className="summary-note">Local replay · Synthetic rehearsal</span>}
+            {run && <button type="button" className="step-link comparison-jump" onClick={rehearseContingencies}>Rehearse contingencies</button>}
             {!comparison && reportAction}
           </div>
         </section>
+        <span className="sr-only" role="status">{contingencyResults.length > 0
+          ? `Contingency results for ${formatRunId(runCount)}. ${contingencyResults.map(({ verdict, assumption }) => `${verdict}. ${assumptionLabels[assumption]}.`).join(' ')}`
+          : ''}</span>
+        {run && contingencyResults.length > 0 &&
+          <Contingencies scenario={scenario} run={run} number={runCount} results={contingencyResults}
+            onReturn={() => focusSection('drill-outcome')} />}
 
         <div className="workspace-grid">
           <section className="panel runbook" aria-labelledby="runbook-heading">
@@ -212,6 +300,9 @@ export function App() {
                             <button type="button" className="button move-button" aria-label={`Move down: ${step.title}`}
                               aria-disabled={index === plan.length - 1} onClick={() => moveStep(index, 1)}><ArrowDown size={15} aria-hidden="true" /></button>
                           </div>}
+                          {step.id === affectedStep?.id && assumption !== defaultAssumption(scenario) &&
+                            <p className="step-assumption">{run && run.assumption !== assumption ? 'Draft · ' : ''}
+                              {assumptionLabels[assumption]}.</p>}
                         </li>
                       )
                     })}
@@ -230,6 +321,16 @@ export function App() {
             </div>}
             {scenario.rollbackEditor === 'order' && pending &&
               <p className="pending reorder-pending" role="status">Pending edit · Rerun to apply</p>}
+            {affectedStep && <details className="assumption-editor">
+              <summary>Edit scenario assumptions</summary>
+              <label htmlFor="restoration-assumption">Restoration outcome · {affectedStep.title}</label>
+              <select id="restoration-assumption" value={assumption}
+                onChange={(event) => setAssumption(event.currentTarget.value as ScenarioAssumption)}>
+                {assumptionOptions(scenario).map((option) => <option key={option} value={option}>{assumptionLabels[option]}</option>)}
+              </select>
+              {assumption !== defaultAssumption(scenario) &&
+                <button type="button" className="step-link" onClick={reset}>Restore preset defaults</button>}
+            </details>}
           </section>
 
           <ServiceMap snapshot={selected} runLabel={activeRun ? inspectedRunLabel : undefined}
@@ -237,7 +338,7 @@ export function App() {
             onBackToComparison={selectedRef.fromComparison ? openComparison : undefined} />
           <Evidence snapshot={selected} requiredChecks={scenario.requiredChecks} runs={recordedRuns} runLabels={runLabels}
             comparison={comparison} selectedRunRef={selectedRef.run} onSelectSnapshot={selectSnapshot}
-            reportAction={reportAction} />
+            reportAction={reportAction} assumptionChange={assumptionChange} />
         </div>
 
         <footer className="workspace-footer"><FlaskConical size={15} aria-hidden="true" /> Synthetic data <span>·</span> {scenario.scope}</footer>

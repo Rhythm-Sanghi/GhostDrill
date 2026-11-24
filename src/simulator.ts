@@ -161,7 +161,7 @@ export function runDrill(scenario: DrillScenario, rollbackPlan: readonly Runbook
         break
       case 'restore-connector':
         if (state.kind !== 'dispatch') throw new Error('Restoring the connector requires the dispatch queue.')
-        state = { ...state, connectorReady: true }
+        state = { ...state, connectorReady: action.ready ?? true }
         sources = { ...sources, shippingConnector: source }
         break
     }

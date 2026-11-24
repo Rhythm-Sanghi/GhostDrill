@@ -1,28 +1,33 @@
 # Ghost Drill
 
-Ghost Drill is a browser-based rehearsal for network maintenance. Its synthetic warehouse scenarios distinguish a completed rollback from verified service recovery. The evidence compares required checks for label printing and the queue endpoint across Baseline and Rollback.
+Ghost Drill is a browser-based network maintenance rehearsal for Kiroween 2026 Frankenstein. It combines a human runbook, synthetic service dependencies, and replayable evidence. A completed rollback and a verification verdict answer different questions about the modeled service.
 
-## Try the warehouse drill
+**[Live demo](https://rhythm-sanghi.github.io/GhostDrill/)**
 
-1. Select **Try the warehouse drill**. The runbook reports **Rollback completed** while verification reports **Failed** and printing stays down.
-2. Select **Inspect responsible step** in Evidence to jump to the Change step that pointed the queue at backup. Select earlier steps to inspect their snapshots.
-3. Under **Edit rollback**, add **Restore label queue endpoint** and select **Rerun drill**. The new run starts from Baseline and reports **Verified**.
-4. Under **Run comparison**, use the **Before** and **After** evidence links to inspect each recorded run. **Reset** clears the comparison and restores the original plan.
+## One-minute walkthrough
 
-Choose **Missing Print Path Evidence** from **Scenario** and run it to reproduce **Unknown**. The queue endpoint is restored, but reachability from the primary gateway to the print service was not observed. Reset and rerun to repeat it.
+1. Run **Warehouse Label Outage**. Rollback completes, but printing fails. **Inspect responsible step** in the label printing proof shows the switch to the backup gateway.
+2. Add **Restore label queue endpoint** and rerun. Open **Failed → Verified · View comparison**. Inspect **Before** to see the backup route in the previous run, then **After** to see the restored route. **Return to latest run** jumps back to the latest final snapshot.
+3. Switch to **Dispatch Queue Rollback** and run it. The queue stays paused because reopening was attempted before the shipping connector was ready. Move **Restore shipping connector** up and rerun. The comparison shows both step orders and the verified result.
+
+Run **Missing Print Path Evidence** twice to see **Unknown → Unknown** and the missing reachability observation. **Reset** restores the supplied plan and clears recorded runs.
+
+## Kiro contribution
+
+Kiro authored and implemented **Compare rollback runs** using Quick Spec. The repeated-step browser test uses Tab and Enter to replay both recorded snapshots. [Requirement 4](.kiro/specs/compare-rollback-runs/requirements.md#requirement-4-link-changed-check-evidence-to-recorded-snapshots) · [Evidence controls](src/Evidence.tsx) · [Browser tests](tests/drill.spec.ts)
+
+Rhythm Sanghi supplied the brief and Threadmark visual reference. OpenAI Codex built the initial rehearsal and verified service recovery, then delivered this release pass with phase-aware comparisons, the dispatch drill, browser verification, and Pages publishing. The root [.kiro](.kiro) folder contains both specs, steering, and the save hook.
 
 ## Run locally
 
-Use Node.js 24 and npm.
+Use Node.js 24 and npm. The simulator runs entirely in the browser.
 
 ```sh
 npm ci
 npm run dev
 ```
 
-Open the local URL printed by Vite. The simulation runs entirely in the browser.
-
-## Verify
+The release checks use the built app.
 
 ```sh
 npm run lint
@@ -33,14 +38,6 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The browser suite builds and serves the app under `/ghost-drill/` on desktop and mobile emulation, with keyboard checks on desktop. Set `PLAYWRIGHT_CHANNEL=chrome` to use installed Google Chrome. To preview an existing build, run `npm run preview -- --base /ghost-drill/` and open the URL Vite prints.
-
-## GitHub Pages
-
-The build emits relative asset paths into `dist/`. For a ₹0 release, use a public GitHub repository named `ghost-drill`. After pushing `main`, choose **GitHub Actions** under **Settings → Pages → Build and deployment → Source**. In **Actions → Publish Ghost Drill**, select **Run workflow** on `main` and open the deployment URL from the completed run. See the [GitHub Pages setup guide](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
-
-## Contributions and license
-
-Rhythm Sanghi supplied the project brief and Threadmark visual reference. OpenAI Codex built the rehearsal, authored the [verified recovery spec](.kiro/specs/verified-service-recovery/requirements.md) and steering, and verified the release. Kiro used Quick Spec to author and implement [Compare rollback runs](.kiro/specs/compare-rollback-runs/requirements.md). The [Kiro save hook](.kiro/hooks/simulator-tests.json) is configured to run `npm test` when simulator or fixture files are saved.
+Playwright builds and serves the app at `/GhostDrill/` for desktop and mobile. To preview an existing build, run `npm run preview -- --base /GhostDrill/`. The manual **Publish Ghost Drill** workflow runs the release gates and deploys to GitHub Pages.
 
 Ghost Drill is released under the [MIT License](LICENSE). Bundled fonts, icons, and libraries retain their [third-party licenses](public/third-party-licenses.txt).

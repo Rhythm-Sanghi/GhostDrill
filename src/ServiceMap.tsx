@@ -1,6 +1,6 @@
-import { Database, GitFork, Printer, Router } from 'lucide-react'
-import { endpoints, type Endpoint, type Reachability } from './scenario'
-import type { Snapshot } from './simulator'
+import { Database, GitFork, Plug, Printer, Router } from 'lucide-react'
+import { endpoints, type DispatchState, type Endpoint, type Reachability } from './scenario'
+import { getCheck, type Snapshot } from './simulator'
 
 const gatewayOrder: readonly Endpoint[] = ['primary', 'backup']
 const pathLabels: Record<Reachability, { text: string; tone: string; connection: string }> = {
@@ -14,9 +14,13 @@ const printerLabels = {
   unknown: { text: 'Print status unknown', tone: 'warning', node: 'unobserved' },
 }
 
-export function ServiceMap({ snapshot, runLabel }: { snapshot: Snapshot; runLabel?: string }) {
-  const { state, checks } = snapshot
-  const printer = printerLabels[checks['label-printing'].status]
+export function ServiceMap({ snapshot, runLabel, onReturnToLatest }: {
+  snapshot: Snapshot
+  runLabel?: string
+  onReturnToLatest?: () => void
+}) {
+  const { state } = snapshot
+  const printer = state.kind === 'warehouse' ? printerLabels[getCheck(snapshot, 'label-printing').status] : null
 
   return (
     <section className="panel map" id="service-map" tabIndex={-1} aria-labelledby="map-heading" aria-describedby={runLabel ? 'map-run' : undefined}>
@@ -26,10 +30,12 @@ export function ServiceMap({ snapshot, runLabel }: { snapshot: Snapshot; runLabe
       </header>
       <div className="map-canvas">
         <div className="map-context">
-          <span className="eyebrow" id="map-run">{runLabel ?? 'Warehouse network'}</span>
+          <span className="eyebrow" id="map-run">{runLabel ?? (state.kind === 'dispatch' ? 'Dispatch network' : 'Warehouse network')}</span>
           <strong>{snapshot.title}</strong>
+          {onReturnToLatest && <button type="button" className="step-link" onClick={onReturnToLatest}>Return to latest run</button>}
         </div>
-        <div className="topology">
+        {state.kind === 'dispatch' && <DispatchTopology state={state} />}
+        {state.kind === 'warehouse' && printer && <div className="topology">
           <div className="map-node queue-node">
             <Database size={19} aria-hidden="true" />
             <strong>Label queue</strong>
@@ -58,14 +64,33 @@ export function ServiceMap({ snapshot, runLabel }: { snapshot: Snapshot; runLabe
             <strong>Label service</strong>
             <span className={printer.tone}>{printer.text}</span>
           </div>
-        </div>
+        </div>}
       </div>
-      <div className="map-legend">
+      {printer && <div className="map-legend">
         <span><i className="legend-line active" /> Active route</span>
         <span><i className="legend-line inactive" /> Inactive route</span>
         <span><i className="legend-line failed" /> Blocked route</span>
         {printer.node === 'unobserved' && <span><i className="legend-line unobserved" /> Unobserved route</span>}
-      </div>
+      </div>}
     </section>
+  )
+}
+
+function DispatchTopology({ state }: { state: DispatchState }) {
+  const open = state.queue === 'open'
+  return (
+    <div className="dispatch-topology">
+      <div className={`map-node ${open ? 'available' : 'unavailable'}`}>
+        <Database size={19} aria-hidden="true" />
+        <strong>Dispatch queue</strong>
+        <span className={open ? 'good' : 'bad'}>{open ? 'Queue open' : 'Queue paused'}</span>
+      </div>
+      <span className="dispatch-dependency">Requires <span aria-hidden="true">→</span></span>
+      <div className={`map-node ${state.connectorReady ? 'available' : 'unavailable'}`}>
+        <Plug size={19} aria-hidden="true" />
+        <strong>Shipping connector</strong>
+        <span className={state.connectorReady ? 'good' : 'bad'}>{state.connectorReady ? 'Connector ready' : 'Connector offline'}</span>
+      </div>
+    </div>
   )
 }

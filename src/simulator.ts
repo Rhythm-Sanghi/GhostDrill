@@ -1,12 +1,14 @@
-import { endpoints, type CheckId, type DrillScenario, type Endpoint, type Phase, type RunbookStep, type WarehouseState } from './scenario.ts'
+import { endpoints, type CheckId, type DrillScenario, type Endpoint, type Phase, type RunbookStep, type ServiceState, type WarehouseState } from './scenario.ts'
 
-type CheckResult =
+export type CheckResult =
   | { status: 'healthy' | 'unhealthy'; reason: string; stepId: string }
   | { status: 'unknown'; reason: string }
 
 export const checkNames: Readonly<Record<CheckId, string>> = {
   'label-printing': 'Label printing',
   'queue-endpoint': 'Queue endpoint',
+  'dispatch-queue': 'Dispatch queue',
+  'shipping-connector': 'Shipping connector',
 }
 
 export interface Snapshot {
@@ -14,8 +16,14 @@ export interface Snapshot {
   phase: Phase
   title: string
   description: string
-  state: WarehouseState
-  checks: Readonly<Record<CheckId, CheckResult>>
+  state: ServiceState
+  checks: Readonly<Partial<Record<CheckId, CheckResult>>>
+}
+
+export function getCheck(snapshot: Snapshot, id: CheckId): CheckResult {
+  const result = snapshot.checks[id]
+  if (!result) throw new Error(`Check ${id} is missing from snapshot ${snapshot.id}.`)
+  return result
 }
 
 export interface CheckComparison {
@@ -34,12 +42,16 @@ interface ObservationSource {
 interface StateSources {
   queueEndpoint: ObservationSource
   printPaths: Readonly<Record<Endpoint, ObservationSource>>
+  dispatchQueue: ObservationSource
+  shippingConnector: ObservationSource
 }
 
 const baselineSource: ObservationSource = { stepId: 'baseline', sequence: 0 }
 const baselineSources: StateSources = {
   queueEndpoint: baselineSource,
   printPaths: { primary: baselineSource, backup: baselineSource },
+  dispatchQueue: baselineSource,
+  shippingConnector: baselineSource,
 }
 
 function checkLabelPrinting(state: WarehouseState, sources: StateSources): CheckResult {
@@ -57,7 +69,26 @@ function checkLabelPrinting(state: WarehouseState, sources: StateSources): Check
     : { status: 'unhealthy', reason: `${gateway} cannot reach the print service.`, stepId: latestSource.stepId }
 }
 
-function evaluateChecks(state: WarehouseState, sources: StateSources): Snapshot['checks'] {
+function evaluateChecks(state: ServiceState, sources: StateSources): Snapshot['checks'] {
+  if (state.kind === 'dispatch') {
+    const queueReasons = {
+      open: 'The dispatch queue is open.',
+      paused: 'The dispatch queue was paused for maintenance.',
+      blocked: 'The queue stayed paused because the shipping connector was not ready when reopening was attempted.',
+    }
+    return {
+      'dispatch-queue': {
+        status: state.queue === 'open' ? 'healthy' : 'unhealthy',
+        reason: queueReasons[state.queue],
+        stepId: sources.dispatchQueue.stepId,
+      },
+      'shipping-connector': {
+        status: state.connectorReady ? 'healthy' : 'unhealthy',
+        reason: state.connectorReady ? 'The shipping connector is ready.' : 'The shipping connector is offline.',
+        stepId: sources.shippingConnector.stepId,
+      },
+    }
+  }
   const { queueEndpoint } = state
   return {
     'label-printing': checkLabelPrinting(state, sources),
@@ -82,7 +113,10 @@ function verdictFor(comparisons: readonly CheckComparison[]): Verdict {
 }
 
 export function createBaselineSnapshot(scenario: DrillScenario): Snapshot {
-  const state = { ...scenario.baseline, printPaths: { ...scenario.baseline.printPaths } }
+  const { baseline } = scenario
+  const state = baseline.kind === 'warehouse'
+    ? { ...baseline, printPaths: { ...baseline.printPaths } }
+    : { ...baseline }
   return {
     id: 'baseline',
     phase: 'Baseline',
@@ -104,12 +138,29 @@ export function runDrill(scenario: DrillScenario, rollbackPlan: readonly Runbook
     const source = { stepId: step.id, sequence: snapshots.length }
     switch (action.type) {
       case 'set-queue-endpoint':
+        if (state.kind !== 'warehouse') throw new Error('Queue endpoint changes require the warehouse.')
         state = { ...state, queueEndpoint: action.endpoint }
         sources = { ...sources, queueEndpoint: source }
         break
       case 'set-print-path':
+        if (state.kind !== 'warehouse') throw new Error('Print path changes require the warehouse.')
         state = { ...state, printPaths: { ...state.printPaths, [action.endpoint]: action.reachability } }
         sources = { ...sources, printPaths: { ...sources.printPaths, [action.endpoint]: source } }
+        break
+      case 'pause-dispatch':
+        if (state.kind !== 'dispatch') throw new Error('Pausing dispatch requires the dispatch queue.')
+        state = { ...state, queue: 'paused', connectorReady: false }
+        sources = { ...sources, dispatchQueue: source, shippingConnector: source }
+        break
+      case 'reopen-dispatch':
+        if (state.kind !== 'dispatch') throw new Error('Reopening dispatch requires the dispatch queue.')
+        state = { ...state, queue: state.connectorReady ? 'open' : 'blocked' }
+        sources = { ...sources, dispatchQueue: source }
+        break
+      case 'restore-connector':
+        if (state.kind !== 'dispatch') throw new Error('Restoring the connector requires the dispatch queue.')
+        state = { ...state, connectorReady: true }
+        sources = { ...sources, shippingConnector: source }
         break
     }
     snapshots.push({
@@ -123,14 +174,15 @@ export function runDrill(scenario: DrillScenario, rollbackPlan: readonly Runbook
 
   const finalSnapshot = snapshots[snapshots.length - 1]
   const comparisons = scenario.requiredChecks.map((id): CheckComparison => ({
-    id, baseline: baseline.checks[id], rollback: finalSnapshot.checks[id],
+    id, baseline: getCheck(baseline, id), rollback: getCheck(finalSnapshot, id),
   }))
   const failedPhases = (['Baseline', 'Rollback'] as const).filter((phase) => comparisons.some((check) =>
     check[phase === 'Baseline' ? 'baseline' : 'rollback'].status === 'unhealthy'))
 
   return {
+    scenarioId: scenario.id,
     snapshots,
-    firstFailure: snapshots.find((snapshot) => snapshot.checks['label-printing'].status === 'unhealthy'),
+    firstFailure: snapshots.find((snapshot) => getCheck(snapshot, scenario.serviceCheck).status === 'unhealthy'),
     finalSnapshot,
     comparisons,
     verdict: verdictFor(comparisons),

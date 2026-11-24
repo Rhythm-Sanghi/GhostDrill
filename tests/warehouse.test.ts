@@ -1,20 +1,26 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createRollbackPlan, missingPrintPath, warehouseOutage, type DrillScenario } from '../src/scenario.ts'
-import { createBaselineSnapshot, runDrill } from '../src/simulator.ts'
+import { createBaselineSnapshot, getCheck, runDrill, type Snapshot } from '../src/simulator.ts'
+import { describeFinalService, verificationNotes } from '../src/outcome.ts'
+
+function warehouseState(snapshot: Snapshot) {
+  assert.equal(snapshot.state.kind, 'warehouse')
+  return snapshot.state
+}
 
 test('baseline prints through the required primary gateway', () => {
   const baseline = createBaselineSnapshot(warehouseOutage)
-  assert.equal(baseline.state.queueEndpoint, 'primary')
-  assert.equal(baseline.checks['label-printing'].status, 'healthy')
-  assert.equal(baseline.checks['queue-endpoint'].status, 'healthy')
+  assert.equal(warehouseState(baseline).queueEndpoint, 'primary')
+  assert.equal(getCheck(baseline, 'label-printing').status, 'healthy')
+  assert.equal(getCheck(baseline, 'queue-endpoint').status, 'healthy')
 })
 
 test('the supplied rollback completes but fails verification with evidence for the endpoint switch', () => {
   const run = runDrill(warehouseOutage, createRollbackPlan(warehouseOutage, false))
   assert.deepEqual(run.executedRollbackStepIds, ['restore-primary'])
-  assert.equal(run.finalSnapshot.state.printPaths.primary, 'reachable')
-  assert.equal(run.finalSnapshot.state.queueEndpoint, 'backup')
+  assert.equal(warehouseState(run.finalSnapshot).printPaths.primary, 'reachable')
+  assert.equal(warehouseState(run.finalSnapshot).queueEndpoint, 'backup')
   assert.equal(run.verdict, 'Failed')
   assert.deepEqual(run.failedPhases, ['Rollback'])
   assert.equal(run.firstFailure?.id, 'switch-queue')
@@ -30,14 +36,14 @@ test('a revised plan verifies recovery from baseline and keeps earlier snapshots
   const run = runDrill(warehouseOutage, createRollbackPlan(warehouseOutage, true))
   assert.deepEqual(run.snapshots[0], createBaselineSnapshot(warehouseOutage))
   assert.equal(run.finalSnapshot.id, 'restore-queue')
-  assert.equal(run.finalSnapshot.state.queueEndpoint, 'primary')
+  assert.equal(warehouseState(run.finalSnapshot).queueEndpoint, 'primary')
   assert.equal(run.verdict, 'Verified')
   assert.deepEqual(run.failedPhases, [])
-  assert.deepEqual(run.snapshots.map(({ checks }) => checks['label-printing'].status), [
+  assert.deepEqual(run.snapshots.map((snapshot) => getCheck(snapshot, 'label-printing').status), [
     'healthy', 'unhealthy', 'unhealthy', 'unhealthy', 'healthy',
   ])
-  assert.equal(run.snapshots[2].state.printPaths.primary, 'unreachable')
-  assert.equal(run.snapshots[3].state.printPaths.primary, 'reachable')
+  assert.equal(warehouseState(run.snapshots[2]).printPaths.primary, 'unreachable')
+  assert.equal(warehouseState(run.snapshots[3]).printPaths.primary, 'reachable')
 })
 
 test('a confirmed unhealthy baseline fails even when rollback is healthy', () => {
@@ -46,9 +52,11 @@ test('a confirmed unhealthy baseline fails even when rollback is healthy', () =>
     baseline: { ...warehouseOutage.baseline, printPaths: { primary: 'unreachable', backup: 'unreachable' } },
   }
   const run = runDrill(scenario, createRollbackPlan(scenario, true))
-  assert.equal(run.finalSnapshot.checks['label-printing'].status, 'healthy')
+  assert.equal(getCheck(run.finalSnapshot, 'label-printing').status, 'healthy')
   assert.equal(run.verdict, 'Failed')
   assert.deepEqual(run.failedPhases, ['Baseline'])
+  assert.equal(describeFinalService(run).description, 'Printing works after rollback')
+  assert.deepEqual(verificationNotes(run), ['Failed in Baseline'])
   assert.deepEqual(runDrill(scenario, createRollbackPlan(scenario, false)).failedPhases, ['Baseline', 'Rollback'])
 })
 
@@ -58,7 +66,7 @@ test('a confirmed baseline failure takes precedence over an unknown rollback res
     baseline: { ...missingPrintPath.baseline, printPaths: { primary: 'unreachable', backup: 'unreachable' } },
   }
   const run = runDrill(scenario, createRollbackPlan(scenario, false))
-  assert.equal(run.finalSnapshot.checks['label-printing'].status, 'unknown')
+  assert.equal(getCheck(run.finalSnapshot, 'label-printing').status, 'unknown')
   assert.equal(run.verdict, 'Failed')
   assert.deepEqual(run.failedPhases, ['Baseline'])
 })
@@ -69,7 +77,7 @@ test('a confirmed rollback failure takes precedence over an unknown baseline res
     baseline: { ...warehouseOutage.baseline, printPaths: { primary: 'unobserved', backup: 'unreachable' } },
   }
   const run = runDrill(scenario, createRollbackPlan(scenario, false))
-  assert.equal(run.snapshots[0].checks['label-printing'].status, 'unknown')
+  assert.equal(getCheck(run.snapshots[0], 'label-printing').status, 'unknown')
   assert.equal(run.verdict, 'Failed')
   assert.deepEqual(run.failedPhases, ['Rollback'])
 })
@@ -79,8 +87,8 @@ test('missing rollback evidence alone yields repeatable Unknown with no step att
   assert.deepEqual(run.executedRollbackStepIds, ['restore-primary-unobserved', 'restore-queue'])
   assert.equal(run.verdict, 'Unknown')
   assert.deepEqual(run.failedPhases, [])
-  assert.equal(run.finalSnapshot.checks['queue-endpoint'].status, 'healthy')
-  const result = run.finalSnapshot.checks['label-printing']
+  assert.equal(getCheck(run.finalSnapshot, 'queue-endpoint').status, 'healthy')
+  const result = getCheck(run.finalSnapshot, 'label-printing')
   assert.equal(result.status, 'unknown')
   assert.match(result.reason, /reachability from the primary gateway to the print service/)
   assert.ok(!('stepId' in result))
@@ -93,15 +101,17 @@ test('missing baseline evidence alone still yields Unknown after a healthy rollb
     baseline: { ...warehouseOutage.baseline, printPaths: { primary: 'unobserved', backup: 'unreachable' } },
   }
   const run = runDrill(scenario, createRollbackPlan(scenario, true))
-  assert.equal(run.snapshots[0].checks['label-printing'].status, 'unknown')
-  assert.equal(run.finalSnapshot.checks['label-printing'].status, 'healthy')
+  assert.equal(getCheck(run.snapshots[0], 'label-printing').status, 'unknown')
+  assert.equal(getCheck(run.finalSnapshot, 'label-printing').status, 'healthy')
   assert.equal(run.verdict, 'Unknown')
+  assert.equal(describeFinalService(run).description, 'Printing works after rollback')
+  assert.match(verificationNotes(run)[0], /^Baseline .*Missing observation/)
 })
 
 test('an empty required set never verifies a healthy rollback', () => {
   const scenario = { ...warehouseOutage, requiredChecks: [] }
   const run = runDrill(scenario, createRollbackPlan(scenario, true))
-  assert.equal(run.finalSnapshot.checks['label-printing'].status, 'healthy')
+  assert.equal(getCheck(run.finalSnapshot, 'label-printing').status, 'healthy')
   assert.deepEqual(run.comparisons, [])
   assert.equal(run.verdict, 'Unknown')
 })

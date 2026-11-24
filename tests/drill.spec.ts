@@ -3,7 +3,22 @@ import { expect, test, type Locator } from '@playwright/test'
 test('the built drill can be diagnosed, fixed, and reset', async ({ page }) => {
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
-  await page.goto('./')
+  const assets: { type: string; status: number; path: string }[] = []
+  page.on('response', (response) => {
+    const type = response.request().resourceType()
+    if (['script', 'stylesheet', 'font'].includes(type)) {
+      assets.push({ type, status: response.status(), path: new URL(response.url()).pathname })
+    }
+  })
+  const response = await page.goto('./')
+  expect(response?.status()).toBe(200)
+  expect(new URL(page.url()).pathname).toBe('/GhostDrill/')
+  await page.evaluate(() => document.fonts.ready.then(() => undefined))
+  expect(assets.map(({ type }) => type)).toEqual(expect.arrayContaining(['script', 'stylesheet', 'font']))
+  for (const { status, path } of assets) {
+    expect(status).toBe(200)
+    expect(path).toMatch(/^\/GhostDrill\/assets\//)
+  }
 
   const run = page.getByRole('region', { name: 'Drill outcome' })
   const map = page.getByRole('region', { name: 'Service map' })
@@ -30,7 +45,7 @@ test('the built drill can be diagnosed, fixed, and reset', async ({ page }) => {
   await expect(printing.getByRole('group', { name: 'Rollback' }).getByText('Unhealthy')).toBeVisible()
   await expect(endpoint.getByRole('group', { name: 'Rollback' }).getByText('The queue targets gw-backup and requires gw-primary.')).toBeVisible()
 
-  await evidence.getByRole('button', { name: 'Inspect responsible step' }).click()
+  await evidence.getByRole('button', { name: /Inspect responsible step for Label printing/ }).click()
   const switchQueue = timeline.getByRole('button', { name: 'Switch queue to backup' })
   await expect(switchQueue).toBeFocused()
   await expect(switchQueue).toHaveAttribute('aria-current', 'step')
@@ -140,7 +155,7 @@ test('the main flow works using the keyboard', async ({ page }, testInfo) => {
   await page.keyboard.press('Enter')
   await expect(run.getByText('Service still down')).toBeVisible()
   for (let index = 0; index < 7; index++) await page.keyboard.press('Tab')
-  await expect(page.getByRole('button', { name: 'Inspect responsible step' })).toBeFocused()
+  await expect(page.getByRole('button', { name: /Inspect responsible step for Label printing/ })).toBeFocused()
   await page.keyboard.press('Enter')
   await expect(page.getByRole('button', { name: 'Switch queue to backup' })).toBeFocused()
   for (let index = 0; index < 3; index++) await page.keyboard.press('Tab')
@@ -175,7 +190,12 @@ test('two completed runs render a Failed to Verified comparison with the added s
   await timeline.getByRole('button', { name: 'Restore label queue endpoint' }).click()
   await rerun.click()
   await expect(outcome.getByText('Verified', { exact: true })).toBeVisible()
-  await expect(runComparison).toBeVisible()
+  const compareButton = outcome.getByRole('button', { name: 'Failed → Verified · View comparison' })
+  await expect(compareButton).toBeInViewport()
+  await compareButton.click()
+  const heading = runComparison.getByRole('heading', { name: 'Run comparison' })
+  await expect(heading).toBeFocused()
+  await expect(heading).toBeInViewport()
 
   await expect(runComparison.getByText('Failed', { exact: true })).toBeVisible()
   await expect(runComparison.getByText('Verified', { exact: true })).toBeVisible()
@@ -185,12 +205,12 @@ test('two completed runs render a Failed to Verified comparison with the added s
 
   const printing = runComparison.getByRole('article', { name: 'Label printing' })
   const queue = runComparison.getByRole('article', { name: 'Queue endpoint' })
-  await expect(printing.getByRole('group', { name: 'Before' }).getByText('Unhealthy')).toBeVisible()
-  await expect(printing.getByRole('group', { name: 'After' }).getByText('Healthy')).toBeVisible()
-  await expect(queue.getByRole('group', { name: 'Before' }).getByText('Unhealthy')).toBeVisible()
-  await expect(queue.getByRole('group', { name: 'After' }).getByText('Healthy')).toBeVisible()
-  await expect(printing.getByRole('group', { name: 'Before' }).getByText('Backup gateway cannot reach the print service.')).toBeVisible()
-  await expect(printing.getByRole('group', { name: 'After' }).getByText('Primary gateway can reach the print service.')).toBeVisible()
+  await expect(printing.getByRole('group', { name: 'Before · Rollback' }).getByText('Unhealthy')).toBeVisible()
+  await expect(printing.getByRole('group', { name: 'After · Rollback' }).getByText('Healthy')).toBeVisible()
+  await expect(queue.getByRole('group', { name: 'Before · Rollback' }).getByText('Unhealthy')).toBeVisible()
+  await expect(queue.getByRole('group', { name: 'After · Rollback' }).getByText('Healthy')).toBeVisible()
+  await expect(printing.getByRole('group', { name: 'Before · Rollback' }).getByText('Backup gateway cannot reach the print service.')).toBeVisible()
+  await expect(printing.getByRole('group', { name: 'After · Rollback' }).getByText('Primary gateway can reach the print service.')).toBeVisible()
 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width)
   expect(pageErrors).toEqual([])
@@ -208,6 +228,7 @@ test('changed-check Before links open the prior run and After links open the cur
   const timeline = page.getByRole('region', { name: 'Runbook' })
   const launch = page.getByRole('button', { name: 'Try the warehouse drill' })
   const rerun = page.getByRole('button', { name: 'Rerun drill' })
+  const outcome = page.getByRole('region', { name: 'Drill outcome' })
 
   await launch.click()
   await timeline.getByRole('button', { name: 'Restore label queue endpoint' }).click()
@@ -215,28 +236,36 @@ test('changed-check Before links open the prior run and After links open the cur
   await expect(runComparison).toBeVisible()
 
   const printing = runComparison.getByRole('article', { name: 'Label printing' })
-  await printing.getByRole('group', { name: 'Before' }).getByRole('button', { name: 'Inspect responsible step' }).click()
+  await printing.getByRole('group', { name: 'Before · Rollback' }).getByRole('button', { name: /Inspect responsible step for Label printing/ }).click()
   await expect(map).toBeFocused()
-  await expect(map.getByText('Previous run · Run 01')).toBeVisible()
-  await expect(timeline.getByText('Current run · Run 02')).toBeVisible()
+  await expect(map.getByText('Viewing previous run · Run 01')).toBeVisible()
+  await expect(timeline.getByText('Latest run · Run 02')).toBeVisible()
   await expect(map.getByText('Change snapshot')).toBeVisible()
   await expect(map.getByText('gw-backup', { exact: true })).toBeVisible()
   await expect(map.getByText('Cannot print', { exact: true })).toBeVisible()
+  await expect(outcome.getByText('Latest run verdict')).toBeVisible()
+  await expect(outcome.getByText('Verified', { exact: true })).toBeVisible()
   await expect(selected.getByRole('article', { name: 'Label printing' }).getByText('Unhealthy')).toBeVisible()
-  await expect(proof.getByText('Previous run · Run 01')).toBeVisible()
+  await expect(proof.getByText('Viewing previous run · Run 01')).toBeVisible()
   await expect(printingProof.getByText('Backup gateway cannot reach the print service.')).toBeVisible()
 
-  await printing.getByRole('group', { name: 'After' }).getByRole('button').click()
+  await printing.getByRole('group', { name: 'After · Rollback' }).getByRole('button').click()
   await expect(timeline.getByRole('button', { name: 'Restore label queue endpoint' })).toBeFocused()
-  await expect(map.getByText('Current run · Run 02')).toBeVisible()
+  await expect(map.getByText('Latest run · Run 02')).toBeVisible()
   await expect(map.getByText('Rollback snapshot')).toBeVisible()
   await expect(map.getByText('gw-primary', { exact: true })).toBeVisible()
   await expect(map.getByText('Can print', { exact: true })).toBeVisible()
-  await expect(proof.getByText('Current run · Run 02')).toBeVisible()
+  await expect(proof.getByText('Latest run · Run 02')).toBeVisible()
   await expect(printingProof.getByText('Primary gateway can reach the print service.')).toBeVisible()
+
+  await printing.getByRole('group', { name: 'Before · Rollback' }).getByRole('button').click()
+  await map.getByRole('button', { name: 'Return to latest run' }).click()
+  await expect(map).toBeFocused()
+  await expect(map.getByText('Restore label queue endpoint', { exact: true })).toBeVisible()
+  await expect(map.getByText('Latest run · Run 02')).toBeVisible()
 })
 
-test('identical missing-print-path runs show no modeled outcome changed with Unknown preserved', async ({ page }) => {
+test('identical missing-print-path runs preserve Unknown and report unchanged check results', async ({ page }) => {
   await page.goto('./')
 
   const picker = page.getByRole('combobox', { name: 'Scenario' })
@@ -247,9 +276,10 @@ test('identical missing-print-path runs show no modeled outcome changed with Unk
   await expect(outcome.getByText('Unknown', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: 'Rerun drill' }).click()
+  await expect(outcome.getByRole('button', { name: 'Unknown → Unknown · View comparison' })).toBeVisible()
   const runComparison = evidence.getByRole('region', { name: 'Run comparison' })
   await expect(runComparison).toBeVisible()
-  await expect(runComparison.getByText('No modeled outcome changed between runs.')).toBeVisible()
+  await expect(runComparison.getByText('Required check results stayed the same in Baseline and Rollback.')).toBeVisible()
   await expect(runComparison.getByText('Unknown', { exact: true })).toHaveCount(2)
   await expect(runComparison.getByRole('article', { name: 'Label printing' })).toHaveCount(0)
   await expect(runComparison.getByText('Added steps')).toHaveCount(0)
@@ -288,7 +318,7 @@ test('reset and scenario switching clear retained runs and never mix evidence', 
   await page.getByRole('button', { name: 'Rerun drill' }).click()
   const runComparison = evidence.getByRole('region', { name: 'Run comparison' })
   await expect(runComparison).toBeVisible()
-  await expect(runComparison.getByText('No modeled outcome changed between runs.')).toBeVisible()
+  await expect(runComparison.getByText('Required check results stayed the same in Baseline and Rollback.')).toBeVisible()
   await expect(runComparison.getByText('Verified')).toHaveCount(0)
   await expect(runComparison.getByText('Failed', { exact: true })).toHaveCount(0)
 })
@@ -320,7 +350,7 @@ test('a pending draft edit leaves the recorded comparison unchanged until rerun'
   await expect(runComparison.getByText('Restore label queue endpoint')).toBeVisible()
 })
 
-test('comparison links are reachable and operable from the keyboard', async ({ page }, testInfo) => {
+test('comparison links resolve repeated step IDs in the right runs using Tab and Enter', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'Desktop keyboard check')
   await page.goto('./')
 
@@ -328,11 +358,12 @@ test('comparison links are reachable and operable from the keyboard', async ({ p
   const runComparison = evidence.getByRole('region', { name: 'Run comparison' })
   const map = page.getByRole('region', { name: 'Service map' })
   const timeline = page.getByRole('region', { name: 'Runbook' })
-  const launch = page.getByRole('button', { name: 'Try the warehouse drill' })
+  const launch = page.getByRole('button', { name: 'Try the dispatch drill' })
   const rerun = page.getByRole('button', { name: 'Rerun drill' })
 
+  await page.getByRole('combobox', { name: 'Scenario' }).selectOption('dispatch-queue')
   await launch.click()
-  await timeline.getByRole('button', { name: 'Restore label queue endpoint' }).click()
+  await timeline.getByRole('button', { name: 'Move up: Restore shipping connector' }).click()
   await rerun.click()
   await expect(runComparison).toBeVisible()
 
@@ -344,20 +375,99 @@ test('comparison links are reachable and operable from the keyboard', async ({ p
     await expect(target).toBeFocused()
   }
 
-  const printing = runComparison.getByRole('article', { name: 'Label printing' })
-  const beforeButton = printing.getByRole('group', { name: 'Before' }).getByRole('button', { name: 'Inspect responsible step' })
+  const openComparison = page.getByRole('button', { name: 'Failed → Verified · View comparison' })
+  await tabTo(openComparison)
+  await page.keyboard.press('Enter')
+  const heading = runComparison.getByRole('heading', { name: 'Run comparison' })
+  await expect(heading).toBeFocused()
+  await expect(heading).toBeInViewport()
+  await expect(heading).toHaveCSS('outline-style', 'solid')
+
+  const queue = runComparison.getByRole('article', { name: 'Dispatch queue' })
+  const beforeButton = queue.getByRole('button', { name: 'Inspect responsible step for Dispatch queue · Before · Rollback · Viewing previous run · Run 01' })
   await tabTo(beforeButton)
   await expect(beforeButton).toHaveCSS('outline-style', 'solid')
   await page.keyboard.press('Enter')
   await expect(map).toBeFocused()
   await expect(map).toHaveCSS('outline-color', 'rgb(184, 228, 207)')
-  await expect(map.getByText('Previous run · Run 01')).toBeVisible()
-  await expect(map.getByText('Change snapshot')).toBeVisible()
+  await expect(map.getByText('Viewing previous run · Run 01')).toBeVisible()
+  await expect(map.getByText('Reopen dispatch queue', { exact: true })).toBeVisible()
+  await expect(map.getByText('Connector offline')).toBeVisible()
 
-  const afterButton = printing.getByRole('group', { name: 'After' }).getByRole('button')
+  const afterButton = queue.getByRole('button', { name: 'View step for Dispatch queue · After · Rollback · Latest run · Run 02' })
   await tabTo(afterButton)
   await expect(afterButton).toHaveCSS('outline-style', 'solid')
   await page.keyboard.press('Enter')
-  await expect(timeline.getByRole('button', { name: 'Restore label queue endpoint' })).toBeFocused()
-  await expect(map.getByText('Current run · Run 02')).toBeVisible()
+  await expect(timeline.getByRole('button', { name: 'Reopen dispatch queue', exact: true })).toBeFocused()
+  await expect(map.getByText('Reopen dispatch queue', { exact: true })).toBeVisible()
+  await expect(map.getByText('Latest run · Run 02')).toBeVisible()
+  await expect(map.getByText('Connector ready')).toBeVisible()
+})
+
+test('dispatch requires a ready connector, and reset and scenario switching restore the original order', async ({ page }, testInfo) => {
+  await page.goto('./')
+  const picker = page.getByRole('combobox', { name: 'Scenario' })
+  const outcome = page.getByRole('region', { name: 'Drill outcome' })
+  const map = page.getByRole('region', { name: 'Service map' })
+  const launch = page.getByRole('button', { name: 'Try the dispatch drill' })
+  const rollbackSteps = page.getByRole('region', { name: 'Runbook' }).locator('.phase').filter({
+    has: page.getByRole('heading', { name: 'Rollback', exact: true }),
+  }).getByRole('listitem')
+  const defaultOrder = [/^Reopen dispatch queue/, /^Restore shipping connector/]
+  const correctedOrder = [...defaultOrder].reverse()
+  const comparison = page.getByRole('region', { name: 'Run comparison' })
+  const moveUp = page.getByRole('button', { name: 'Move up: Restore shipping connector' })
+  const moveDown = page.getByRole('button', { name: 'Move down: Restore shipping connector' })
+
+  await picker.selectOption('dispatch-queue')
+  await expect(rollbackSteps).toHaveText(defaultOrder)
+  await launch.click()
+  await expect(outcome.getByText('Rollback completed')).toBeVisible()
+  await expect(outcome.getByText('Failed', { exact: true })).toBeVisible()
+  await expect(map.getByText('Queue paused')).toBeVisible()
+  await expect(map.getByText('Connector ready')).toBeVisible()
+
+  const queue = page.getByRole('region', { name: 'Rollback proof' }).getByRole('article', { name: 'Dispatch queue' })
+  await expect(queue.getByText(/connector was not ready when reopening was attempted/)).toBeVisible()
+  await queue.getByRole('button', { name: /Inspect responsible step/ }).click()
+  await expect(map.getByText('Reopen dispatch queue', { exact: true })).toBeVisible()
+  await expect(map.getByText('Connector offline')).toBeVisible()
+
+  if (testInfo.project.name === 'mobile') {
+    await moveUp.tap()
+  } else {
+    // Move from the focused Reopen snapshot button to Restore's Move up.
+    for (let index = 0; index < 4; index++) await page.keyboard.press('Tab')
+    await expect(moveUp).toBeFocused()
+    await expect(moveUp).toHaveCSS('outline-style', 'solid')
+    await page.keyboard.press('Enter')
+  }
+  await expect(rollbackSteps).toHaveText(correctedOrder)
+  await expect(outcome.getByText('Failed', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Rerun drill' }).click()
+  await expect(outcome.getByText('Verified', { exact: true })).toBeVisible()
+  await expect(map.getByText('Queue open')).toBeVisible()
+  await expect(comparison.getByRole('heading', { name: 'Rollback order changed' })).toBeVisible()
+  const recordedOrders = comparison.getByRole('list')
+  await expect(recordedOrders.nth(0).getByRole('listitem')).toHaveText(defaultOrder)
+  await expect(recordedOrders.nth(1).getByRole('listitem')).toHaveText(correctedOrder)
+
+  await moveDown.click()
+  await expect(rollbackSteps).toHaveText(defaultOrder)
+  await expect(outcome.getByText('Verified', { exact: true })).toBeVisible()
+  await expect(recordedOrders.nth(1).getByRole('listitem')).toHaveText(correctedOrder)
+  await moveUp.click()
+  await page.getByRole('button', { name: 'Reset' }).click()
+  await expect(rollbackSteps).toHaveText(defaultOrder)
+  await expect(comparison).toHaveCount(0)
+  await expect(launch).toBeFocused()
+  await launch.click()
+  await expect(outcome.getByText('Failed', { exact: true })).toBeVisible()
+
+  await moveUp.click()
+  await picker.selectOption('warehouse-outage')
+  await picker.selectOption('dispatch-queue')
+  await expect(rollbackSteps).toHaveText(defaultOrder)
+  await expect(page.getByRole('region', { name: 'Rollback proof' })).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize()!.width)
 })

@@ -1,16 +1,28 @@
 export type Endpoint = 'primary' | 'backup'
 export type Reachability = 'reachable' | 'unreachable' | 'unobserved'
 export type Phase = 'Baseline' | 'Change' | 'Rollback'
-export type CheckId = 'label-printing' | 'queue-endpoint'
+export type CheckId = 'label-printing' | 'queue-endpoint' | 'dispatch-queue' | 'shipping-connector'
 
 export interface WarehouseState {
+  readonly kind: 'warehouse'
   readonly queueEndpoint: Endpoint
   readonly printPaths: Readonly<Record<Endpoint, Reachability>>
 }
 
+export interface DispatchState {
+  readonly kind: 'dispatch'
+  readonly queue: 'open' | 'paused' | 'blocked'
+  readonly connectorReady: boolean
+}
+
+export type ServiceState = WarehouseState | DispatchState
+
 type Action =
   | { type: 'set-queue-endpoint'; endpoint: Endpoint }
   | { type: 'set-print-path'; endpoint: Endpoint; reachability: Reachability }
+  | { type: 'pause-dispatch' }
+  | { type: 'reopen-dispatch' }
+  | { type: 'restore-connector' }
 
 export interface RunbookStep {
   id: string
@@ -25,6 +37,7 @@ export const endpoints = {
 } satisfies Record<Endpoint, { name: string; address: string }>
 
 const baseline: WarehouseState = {
+  kind: 'warehouse',
   queueEndpoint: 'primary',
   printPaths: { primary: 'reachable', backup: 'unreachable' },
 }
@@ -60,19 +73,22 @@ export const restoreQueue: RunbookStep = {
   action: { type: 'set-queue-endpoint', endpoint: 'primary' },
 }
 
-export interface DrillScenario {
+export interface DrillScenario<State extends ServiceState = ServiceState> {
   readonly id: string
   readonly title: string
   readonly description: string
   readonly launchLabel: string
-  readonly baseline: WarehouseState
+  readonly baseline: State
   readonly changeSteps: readonly RunbookStep[]
   readonly rollbackSteps: readonly RunbookStep[]
   readonly requiredChecks: readonly CheckId[]
-  readonly canEditRollback: boolean
+  readonly rollbackEditor: 'endpoint' | 'order' | 'none'
+  readonly serviceCheck: CheckId
+  readonly startingState: string
+  readonly scope: string
 }
 
-export const warehouseOutage: DrillScenario = {
+export const warehouseOutage: DrillScenario<WarehouseState> = {
   id: 'warehouse-outage',
   title: 'Warehouse Label Outage',
   description: 'Rehearse a gateway change and see whether rollback brings shipping label printing back.',
@@ -81,10 +97,13 @@ export const warehouseOutage: DrillScenario = {
   changeSteps,
   rollbackSteps: originalRollback,
   requiredChecks: ['label-printing', 'queue-endpoint'],
-  canEditRollback: true,
+  rollbackEditor: 'endpoint',
+  serviceCheck: 'label-printing',
+  startingState: 'Queue points to the primary gateway',
+  scope: 'Checks the queue endpoint and its active path to the print service.',
 }
 
-export const missingPrintPath: DrillScenario = {
+export const missingPrintPath: DrillScenario<WarehouseState> = {
   ...warehouseOutage,
   id: 'missing-print-path',
   title: 'Missing Print Path Evidence',
@@ -99,13 +118,46 @@ export const missingPrintPath: DrillScenario = {
     },
     restoreQueue,
   ],
-  canEditRollback: false,
+  rollbackEditor: 'none',
 }
 
-export const scenarios = [warehouseOutage, missingPrintPath] as const
+export const dispatchQueue: DrillScenario<DispatchState> = {
+  id: 'dispatch-queue',
+  title: 'Dispatch Queue Rollback',
+  description: 'Reopen a paused dispatch queue after maintenance. The queue needs its shipping connector to be ready first.',
+  launchLabel: 'Try the dispatch drill',
+  baseline: { kind: 'dispatch', queue: 'open', connectorReady: true },
+  changeSteps: [{
+    id: 'pause-dispatch',
+    title: 'Pause dispatch for maintenance',
+    description: 'Pause the queue and take the shipping connector offline.',
+    action: { type: 'pause-dispatch' },
+  }],
+  rollbackSteps: [
+    {
+      id: 'reopen-dispatch',
+      title: 'Reopen dispatch queue',
+      description: 'Attempt to reopen the queue using the shipping connector.',
+      action: { type: 'reopen-dispatch' },
+    },
+    {
+      id: 'restore-connector',
+      title: 'Restore shipping connector',
+      description: 'Bring the connector back online.',
+      action: { type: 'restore-connector' },
+    },
+  ],
+  requiredChecks: ['dispatch-queue', 'shipping-connector'],
+  rollbackEditor: 'order',
+  serviceCheck: 'dispatch-queue',
+  startingState: 'Dispatch queue open and connector ready',
+  scope: 'Checks the dispatch queue and its shipping connector.',
+}
+
+export const scenarios = [warehouseOutage, missingPrintPath, dispatchQueue] as const
 
 export function createRollbackPlan(scenario: DrillScenario, includeRestore: boolean): readonly RunbookStep[] {
-  return includeRestore && scenario.canEditRollback
+  return includeRestore && scenario.rollbackEditor === 'endpoint'
     ? [...scenario.rollbackSteps, restoreQueue]
     : scenario.rollbackSteps
 }

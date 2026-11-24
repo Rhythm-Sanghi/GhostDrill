@@ -1,6 +1,6 @@
 import { Activity } from 'lucide-react'
-import type { CheckId } from './scenario'
-import { checkNames, type DrillRun, type Snapshot, type Verdict } from './simulator'
+import type { CheckId, Phase } from './scenario'
+import { checkNames, getCheck, type CheckResult, type DrillRun, type Snapshot, type Verdict } from './simulator'
 import type { ResolvedRunComparison, RunRef } from './comparison'
 
 const resultLabels = {
@@ -10,34 +10,37 @@ const resultLabels = {
 }
 const verdictTones: Record<Verdict, string> = { Verified: 'good', Failed: 'bad', Unknown: 'warning' }
 
-type CheckResult = Snapshot['checks'][CheckId]
-
-export function Evidence({ snapshot, requiredChecks, run, runLabel, comparison, selectedRunRef, onSelectSnapshot }: {
+export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison, selectedRunRef, onSelectSnapshot }: {
   snapshot: Snapshot
   requiredChecks: readonly CheckId[]
-  run: DrillRun | null
-  runLabel: string
+  runs: Record<RunRef, DrillRun | null>
+  runLabels: Record<RunRef, string>
   comparison: ResolvedRunComparison | null
   selectedRunRef: RunRef
   onSelectSnapshot: (id: string, runRef: RunRef) => void
 }) {
+  const run = runs[selectedRunRef]
+  const runLabel = runLabels[selectedRunRef]
   const firstFailure = run?.firstFailure
   const showSnapshot = !run || selectedRunRef === 'prior' || snapshot.id !== run.finalSnapshot.id
   const outageObserved = run && firstFailure
     && run.snapshots.indexOf(firstFailure) <= run.snapshots.indexOf(snapshot)
 
-  function renderResult(id: CheckId, phaseLabel: string, result: CheckResult, runRef: RunRef) {
+  function renderResult(id: CheckId, phase: Phase, result: CheckResult, runRef: RunRef, side?: 'Before' | 'After') {
     const { tone, text } = resultLabels[result.status]
-    const responsible = id === 'label-printing' && result.status === 'unhealthy'
-      && (phaseLabel === 'Rollback' || phaseLabel === 'Before' || phaseLabel === 'After')
+    const label = side ? `${side} · ${phase}` : phase
+    const actionLabel = result.status === 'unhealthy' && phase === 'Rollback'
+      && (id === 'label-printing' || id === 'dispatch-queue') ? 'Inspect responsible step' : 'View step'
+    const sourceId = 'stepId' in result ? result.stepId : undefined
+    const source = runs[runRef]?.snapshots.find(({ id }) => id === sourceId)
     return (
-      <div className="proof-result" role="group" aria-label={phaseLabel}>
-        <div className="proof-status"><span>{phaseLabel}</span><strong className={tone}>{text}</strong></div>
+      <div className="proof-result" role="group" aria-label={label}>
+        <div className="proof-status"><span>{label}</span><strong className={tone}>{text}</strong></div>
         <p>{result.reason}</p>
-        {'stepId' in result && (
-          <button type="button" className="step-link" onClick={() => onSelectSnapshot(result.stepId, runRef)}
-            aria-label={responsible ? undefined : `View ${phaseLabel} step for ${checkNames[id]}`}>
-            {responsible ? 'Inspect responsible step' : 'View step'}
+        {source && (
+          <button type="button" className="step-link" onClick={() => onSelectSnapshot(source.id, runRef)}
+            aria-label={`${actionLabel} for ${checkNames[id]} · ${label} · ${runLabels[runRef]}`}>
+            {actionLabel}
           </button>
         )}
       </div>
@@ -55,7 +58,7 @@ export function Evidence({ snapshot, requiredChecks, run, runLabel, comparison, 
             {requiredChecks.map((id) => (
               <article className="proof-check" aria-label={checkNames[id]} key={id}>
                 <h4>{checkNames[id]}</h4>
-                {renderResult(id, snapshot.phase, snapshot.checks[id], selectedRunRef)}
+                {renderResult(id, snapshot.phase, getCheck(snapshot, id), selectedRunRef)}
               </article>
             ))}
           </section>
@@ -76,15 +79,18 @@ export function Evidence({ snapshot, requiredChecks, run, runLabel, comparison, 
           </section>
         )}
         {comparison && (
-          <section className="proof-group" aria-label="Run comparison">
-            <h3 className="eyebrow">Run comparison</h3>
+          <section className="proof-group" aria-labelledby="run-comparison-heading">
+            <h3 className="eyebrow" id="run-comparison-heading" tabIndex={-1}>Run comparison</h3>
             <p className="comparison-verdict">
               Verdict{' '}
               <strong className={verdictTones[comparison.priorVerdict]}>{comparison.priorVerdict}</strong>
               {' \u2192 '}
               <strong className={verdictTones[comparison.currentVerdict]}>{comparison.currentVerdict}</strong>
             </p>
-            {comparison.identical && <p className="comparison-identical">No modeled outcome changed between runs.</p>}
+            {comparison.priorVerdict === comparison.currentVerdict &&
+              <p className="comparison-note">The final verdict stayed {comparison.currentVerdict}.</p>}
+            {!comparison.changedChecks.length &&
+              <p className="comparison-note">Required check results stayed the same in Baseline and Rollback.</p>}
             {comparison.addedSteps.length > 0 && (
               <div className="comparison-diff">
                 <span className="eyebrow">Added steps</span>
@@ -97,11 +103,26 @@ export function Evidence({ snapshot, requiredChecks, run, runLabel, comparison, 
                 <ul>{comparison.removedSteps.map((step) => <li key={step.id}>{step.title}</li>)}</ul>
               </div>
             )}
-            {comparison.changedChecks.map(({ id, before, after }) => (
+            {comparison.reorderedSteps && (
+              <div className="comparison-diff comparison-order">
+                <h4 className="eyebrow">Rollback order changed</h4>
+                <div><span>Previous order</span>
+                  <ol>{comparison.reorderedSteps.before.map((step) => <li key={step.id}>{step.title}</li>)}</ol>
+                </div>
+                <div><span>Latest order</span>
+                  <ol>{comparison.reorderedSteps.after.map((step) => <li key={step.id}>{step.title}</li>)}</ol>
+                </div>
+              </div>
+            )}
+            {comparison.changedChecks.map(({ id, phases }) => (
               <article className="proof-check" aria-label={checkNames[id]} key={id}>
                 <h4>{checkNames[id]}</h4>
-                {renderResult(id, 'Before', before, 'prior')}
-                {renderResult(id, 'After', after, 'current')}
+                {phases.map(({ phase, before, after }) => (
+                  <div className="comparison-phase" key={phase}>
+                    {renderResult(id, phase, before, 'prior', 'Before')}
+                    {renderResult(id, phase, after, 'current', 'After')}
+                  </div>
+                ))}
               </article>
             ))}
           </section>

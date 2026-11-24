@@ -42,23 +42,33 @@ function Coverage({ title, exploration, onInspect, inspectLabel }: {
   )
 }
 
-function Trace({ result }: { result: CaseResult }) {
+function Trace({ result, revisionLabel, onInspectRepaired }: {
+  result: CaseResult
+  revisionLabel: string
+  onInspectRepaired?: () => void
+}) {
   return (
     <div className="restart-trace">
-      <h3>Execution trace</h3>
+      <h3>Execution trace · {revisionLabel}</h3>
       <ol>
         {result.trace.map((event, index) => (
           <li key={event.number} id={`restart-event-${event.number}`} tabIndex={-1}
+            aria-label={`Event ${event.number} · ${event.title} · ${revisionLabel} · ${event.attempt}`}
             className={event.number === result.firstFailure?.event ? 'failed-event' : undefined}>
-            {event.attempt !== result.trace[index - 1]?.attempt && <span className="eyebrow">{event.attempt}</span>}
+            {(event.attempt !== result.trace[index - 1]?.attempt || event.number === result.firstFailure?.event
+              || event.title === 'Original receipt reused') && <span className="eyebrow">{revisionLabel} · {event.attempt}</span>}
             <strong>Event {event.number} · {event.title}</strong>
             <p>{event.detail}</p>
             <p className="trace-state">Saved checkpoint · {event.nextAction ? actions[event.nextAction] : 'End of runbook'}
               {result.scenario === 'shipping-release' ? ` · ${event.releases} committed ${event.releases === 1 ? 'release' : 'releases'}` : ''}
               {event.receipt ? ` · Saved receipt ${event.receipt}` : ''}
               {event.response !== 'Not requested' ? ` · Response ${event.response.toLowerCase()}` : ''}</p>
-            {event.number === result.firstFailure?.event &&
-              <button type="button" className="step-link" onClick={() => focusReview('restart-draft-heading')}>Back to repair</button>}
+            {event.number === result.firstFailure?.event && (
+              <div className="map-actions">
+                <button type="button" className="step-link" onClick={() => focusReview('restart-draft-heading')}>Back to repair</button>
+                {onInspectRepaired && <button type="button" className="step-link" onClick={onInspectRepaired}>Inspect repaired case</button>}
+              </div>
+            )}
           </li>
         ))}
       </ol>
@@ -91,6 +101,10 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
   const revision = view === 'after' && revised ? revised : original
   const result = exploration.results.find(({ testCase }) => testCase.id === caseId) ?? exploration.results[0]
   const { comparison } = evaluated
+  const originalFailureId = evaluated.before.counterexample?.testCase.id
+  const repairedCase = comparison?.changed.length === 0 && originalFailureId
+    ? evaluated.after?.results.find(({ testCase, status: verdict }) => testCase.id === originalFailureId && verdict === 'Pass')
+    : undefined
 
   function selectCase(id: string, target: 'before' | 'after' = view) {
     setView(target)
@@ -102,6 +116,13 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
     if (!counterexample) return
     flushSync(() => selectCase(counterexample.testCase.id, target))
     focusReview(`restart-event-${counterexample.firstFailure?.event}`)
+  }
+
+  function inspectRepairedCase() {
+    if (!repairedCase) return
+    flushSync(() => selectCase(repairedCase.testCase.id, 'after'))
+    const receipt = repairedCase.trace.find(({ title }) => title === 'Original receipt reused')
+    focusReview(receipt ? `restart-event-${receipt.number}` : 'restart-evidence-heading')
   }
 
   function rerun() {
@@ -168,12 +189,17 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
                 ? <p className="warning">Scope changed · {comparison.changed.map((key) => scopeLabels[key]).join(', ')}. Repair totals withheld.</p>
                 : <p>{comparison.fixed} fixed · {comparison.remaining} still failing · {comparison.introduced} newly failing · {comparison.inconclusive} need evidence after repair</p>}
             </div>
+            {repairedCase && (
+              <div className="restart-panel-body restart-comparison-action">
+                <button type="button" className="step-link" onClick={inspectRepairedCase}>Inspect repaired case</button>
+              </div>
+            )}
           </section>
         )}
         <div className="restart-grid">
           <RestartDraft scenario={scenario} draft={draft} pending={pending} onChange={setDraft} onRerun={rerun} />
           <section className="panel restart-evidence" aria-labelledby="restart-evidence-heading">
-            <header className="panel-header"><h2 id="restart-evidence-heading">Inspect an execution</h2></header>
+            <header className="panel-header"><h2 id="restart-evidence-heading" tabIndex={-1}>Inspect an execution</h2></header>
             <div className="restart-panel-body">
               {revised && <div className="map-actions" aria-label="Evaluated plan">
                 <button type="button" className="button secondary" aria-pressed={view === 'before'} onClick={() => setView('before')}>Original evidence</button>
@@ -211,7 +237,8 @@ export function RestartReview({ initial, onBack, onScenario, onOpen, status }: {
                   <dt>Case limit</dt><dd>{revision.limit}</dd>
                 </dl>
               </details>
-              <Trace result={result} />
+              <Trace result={result} revisionLabel={view === 'before' ? 'Original plan' : 'Revised plan'}
+                onInspectRepaired={view === 'before' && repairedCase?.testCase.id === result.testCase.id ? inspectRepairedCase : undefined} />
             </div>
           </section>
           <section className="panel restart-share" aria-labelledby="restart-share-heading">

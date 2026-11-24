@@ -39,3 +39,7 @@ Each execution starts from the same fixture and allows at most one interruption.
 Shipping offers four boundaries and at most 25 cases. Routing offers one boundary and at most three cases. A limit can stop enumeration early. A named boundary that does not occur yields Needs evidence unless another requirement already has a confirmed violation. A narrower scope never counts unevaluated original cases as fixed. These checks cover the selected model and bounded executions.
 
 The browser suite drives real downloads and imports, desktop Tab and Enter navigation, reduced motion, and a 320 px viewport. Human feedback remains blank until independent sessions take place.
+
+The shipping browser check follows **Inspect repaired case** from the comparison and from the original duplicate after import. Both links select the same modeled boundary, observation, and restart choice in the revised plan and focus the event that returned `RELEASE-1`. The routing check confirms the link stays hidden when the comparison scope changes. Run `npm run test:browser -- tests/restart.spec.ts`.
+
+The Node checker regression confirms exit 2 when a changed case limit leaves the revised plan passing but changes comparison scope. Run `node --test tests/restart.test.ts`.

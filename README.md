@@ -9,18 +9,18 @@ Download Markdown for a change ticket or export a JSON replay so a reviewer can 
 ## One-minute walkthrough
 
 1. Select **Open restart review**. The uninterrupted shipping run passed. Select **Inspect first counterexample** to see the duplicate committed after restarting from the saved checkpoint.
-2. Select **Use a stable batch key**, then **Rerun interruption cases**. The same nine cases run again and all five original failures are fixed.
-3. Select **Export restart replay** and use **Open replay file** in a fresh browser. The review rebuilds both plans and their traces.
+2. Select **Back to repair**, **Use a stable batch key**, then **Rerun interruption cases**. All five failures are fixed across the same nine cases. Select **Inspect repaired case** to see the original receipt reused.
+3. Select **Export restart replay** and use **Open replay file** in a fresh browser. Inspect the original duplicate, then use **Inspect repaired case** to replay the matching revision.
 
-The restart view also includes **Routing verification restart**. The original drills remain on the landing screen. Draft edits take effect on the next run.
+To try a finished review, download a JSON fixture and select **Open replay file** on the live app’s landing screen. Each fixture rebuilds both revisions. [Shipping replay](examples/shipping-restart-review.json) · [Routing replay](examples/routing-restart-review.json)
 
 ## Kiro contribution
+
+Kiro wrote the restart release boundary contract, implementation, and regression for a retry after a lost acknowledgement. Codex built the executor, review interface, replay, and release checks. [Restart requirement](.kiro/specs/restart-release/requirements.md) · [Boundary code](src/releaseBoundary.ts) · [Lost-acknowledgement test](tests/release-boundary.test.ts#L5)
 
 Kiro authored and implemented **Compare rollback runs** using Quick Spec. The repeated-step browser test uses Tab and Enter to replay both recorded snapshots. [Requirement 4](.kiro/specs/compare-rollback-runs/requirements.md#requirement-4-link-changed-check-evidence-to-recorded-snapshots) · [Evidence controls](src/Evidence.tsx) · [Browser test](tests/drill.spec.ts#L364)
 
 Kiro also wrote the Dispatch prerequisite spec, evaluator, and focused tests. Codex integrated the evaluator and built the remaining acceptance and release changes. Rhythm Sanghi supplied the brief and design references. The Kiro save hook is registered and its automatic execution remains unverified. [Dispatch spec](.kiro/specs/dispatch-prerequisite/requirements.md) · [Evaluator](src/dispatchPrerequisite.ts) · [Tests](tests/dispatch-prerequisite.test.ts#L7)
-
-Kiro wrote the restart release boundary contract, implementation, and tests. Codex built the executor, review interface, replay, and release checks. [Restart spec](.kiro/specs/restart-release/requirements.md) · [Boundary code](src/releaseBoundary.ts) · [Lost-response test](tests/release-boundary.test.ts#L5)
 
 ## Run locally
 

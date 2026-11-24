@@ -236,6 +236,7 @@ h1 { font-size: clamp(2.15rem, 4.4vw, 3.55rem); font-weight: 650; letter-spacing
 .restart-evidence { grid-column: 2; grid-row: span 2; }
 .restart-share { grid-column: 1; }
 .restart-compare { margin-bottom: 14px; }
+.restart-comparison-action { padding-top: 0; }
 .restart-panel-body { display: grid; gap: 10px; padding: 13px 15px; min-width: 0; line-height: 1.4; }
 .restart-panel-body .button, .restart-panel-body .step-link { justify-self: start; }
 .restart-panel-body summary { color: var(--accent); cursor: pointer; }

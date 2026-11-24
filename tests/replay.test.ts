@@ -34,7 +34,7 @@ test('import ignores advisory verdict claims and derives the original failed res
 test('versions, scenario, bounded input, IDs, actions and contingency values are validated', () => {
   const original = buildReplayFile(warehouseOutage, latest, prior, ['unreachable', 'unobserved']).json
   const version = JSON.parse(original)
-  version.formatVersion = 2
+  version.formatVersion = 3
   assert.throws(() => readReplayFile(JSON.stringify(version)), /version is unsupported/)
   const simulator = JSON.parse(original)
   simulator.simulatorVersion = 2

@@ -154,7 +154,24 @@ export const dispatchQueue: DrillScenario<DispatchState> = {
   scope: 'Checks the dispatch queue and its shipping connector.',
 }
 
-export const scenarios = [warehouseOutage, missingPrintPath, dispatchQueue] as const
+export const dispatchReview: DrillScenario<DispatchState> = {
+  ...dispatchQueue,
+  id: 'dispatch-review',
+  title: 'Dispatch Acceptance Review',
+  description: 'Review a rollback that restores dispatch after an early reopen attempt.',
+  launchLabel: 'Try the dispatch review',
+  rollbackSteps: [
+    ...dispatchQueue.rollbackSteps,
+    {
+      id: 'retry-reopen-dispatch',
+      title: 'Retry reopening dispatch queue',
+      description: 'Try reopening again after the connector restoration.',
+      action: { type: 'reopen-dispatch' },
+    },
+  ],
+}
+
+export const scenarios = [warehouseOutage, missingPrintPath, dispatchQueue, dispatchReview] as const
 
 export function createRollbackPlan(scenario: DrillScenario, includeRestore: boolean): readonly RunbookStep[] {
   return includeRestore && scenario.rollbackEditor === 'endpoint'

@@ -1,8 +1,9 @@
-import { createRollbackPlan, scenarios, type DrillScenario, type RunbookStep } from './scenario.ts'
-import { assumptionOptions, recordDrill, recordedPlan, type CompletedRun, type ScenarioAssumption } from './rehearsal.ts'
+import { createRollbackPlan, dispatchReview, scenarios, type DrillScenario, type RunbookStep } from './scenario.ts'
+import { assumptionOptions, recordDrill, recordedPlan, recordedRequirements, type CompletedRun, type ScenarioAssumption } from './rehearsal.ts'
+import { acceptanceRules } from './acceptance.ts'
 
 const format = 'ghost-drill-replay'
-const formatVersion = 1
+const formatVersion = 2
 const simulatorVersion = 1
 export const replayByteLimit = 16 * 1024
 
@@ -10,8 +11,26 @@ function encodeRun(scenario: DrillScenario, { number, run }: CompletedRun) {
   return {
     number,
     assumption: run.assumption,
+    acceptanceChecks: recordedRequirements(run),
     steps: recordedPlan(scenario, run).map(({ id, action }) => ({ id, action: action.type })),
   }
+}
+
+export const sampleReviewJson = JSON.stringify({
+  format, formatVersion, simulatorVersion,
+  scenario: dispatchReview.id,
+  latest: {
+    number: 1,
+    assumption: 'restored',
+    steps: dispatchReview.rollbackSteps.map(({ id, action }) => ({ id, action: action.type })),
+    acceptanceChecks: acceptanceRules(dispatchReview),
+  },
+  contingencies: [],
+})
+
+export function nextRunNumber(number: number) {
+  // At the safe integer limit, renumber the two retained runs as 01 and 02.
+  return number === Number.MAX_SAFE_INTEGER ? 2 : number + 1
 }
 
 export function buildReplayFile(scenario: DrillScenario, latest: CompletedRun, previous: CompletedRun | undefined, contingencies: readonly ScenarioAssumption[]) {
@@ -57,13 +76,27 @@ function readPlan(scenario: DrillScenario, value: unknown): RunbookStep[] {
   return plan
 }
 
-function decodeRun(scenario: DrillScenario, value: unknown): CompletedRun {
+function readAcceptanceChecks(scenario: DrillScenario, value: unknown) {
+  if (value === null) return null
+  const available = acceptanceRules(scenario)
+  if (!Array.isArray(value) || value.length > available.length || new Set(value).size !== value.length) {
+    throw new Error('The replay has invalid or duplicate acceptance checks.')
+  }
+  return value.map((id: unknown) => {
+    const check = available.find((entry) => entry === id)
+    if (!check) throw new Error('The replay contains an unsupported acceptance check.')
+    return check
+  })
+}
+
+function decodeRun(scenario: DrillScenario, value: unknown, version: number): CompletedRun {
   if (!isRecord(value) || typeof value.number !== 'number'
-    || !Number.isSafeInteger(value.number) || value.number < 1 || value.number >= Number.MAX_SAFE_INTEGER) {
+    || !Number.isSafeInteger(value.number) || value.number < 1) {
     throw new Error('The replay has an invalid completed run ID.')
   }
   const assumption = readAssumption(scenario, value.assumption)
-  return { number: value.number, run: recordDrill(scenario, readPlan(scenario, value.steps), assumption) }
+  const checks = version === 1 ? null : readAcceptanceChecks(scenario, value.acceptanceChecks)
+  return { number: value.number, run: recordDrill(scenario, readPlan(scenario, value.steps), assumption, checks) }
 }
 
 export function readReplayFile(json: string) {
@@ -75,13 +108,13 @@ export function readReplayFile(json: string) {
     throw new Error('This file is not readable JSON. Choose a Ghost Drill replay file.')
   }
   if (!isRecord(value) || value.format !== format) throw new Error('Choose a Ghost Drill replay file.')
-  if (value.formatVersion !== formatVersion || value.simulatorVersion !== simulatorVersion) {
+  if ((value.formatVersion !== 1 && value.formatVersion !== formatVersion) || value.simulatorVersion !== simulatorVersion) {
     throw new Error('This replay format or simulator version is unsupported.')
   }
   const scenario = scenarios.find(({ id }) => id === value.scenario)
-  if (!scenario) throw new Error('The replay uses an unsupported scenario.')
-  const latest = decodeRun(scenario, value.latest)
-  const previous = value.previous === undefined ? undefined : decodeRun(scenario, value.previous)
+  if (!scenario || (value.formatVersion === 1 && scenario.id === dispatchReview.id)) throw new Error('The replay uses an unsupported scenario.')
+  const latest = decodeRun(scenario, value.latest, value.formatVersion)
+  const previous = value.previous === undefined ? undefined : decodeRun(scenario, value.previous, value.formatVersion)
   if (previous && previous.number !== latest.number - 1) throw new Error('The replay has duplicate or out-of-order run IDs.')
   if (!Array.isArray(value.contingencies) || value.contingencies.length >= assumptionOptions(scenario).length) {
     throw new Error('The replay has an invalid number of contingency cases.')

@@ -1,6 +1,7 @@
 import { Database, GitFork, Plug, Printer, Router } from 'lucide-react'
 import { endpoints, type DispatchState, type Endpoint, type Reachability } from './scenario'
 import { getCheck, type Snapshot } from './simulator'
+import { requirementName, type AcceptanceEvidence, type AcceptanceRuleId } from './acceptance'
 
 const gatewayOrder: readonly Endpoint[] = ['primary', 'backup']
 const pathLabels: Record<Reachability, { text: string; tone: string; connection: string }> = {
@@ -14,17 +15,20 @@ const printerLabels = {
   unknown: { text: 'Print status unknown', tone: 'warning', node: 'unobserved' },
 }
 
-export function ServiceMap({ snapshot, runLabel, onReturnToLatest, onBackToComparison }: {
+export function ServiceMap({ snapshot, runLabel, onReturnToLatest, onBackToComparison, acceptanceEvidence, onBackToAcceptance }: {
   snapshot: Snapshot
   runLabel?: string
   onReturnToLatest?: () => void
   onBackToComparison?: () => void
+  acceptanceEvidence?: { rule: AcceptanceRuleId; finding: AcceptanceEvidence }
+  onBackToAcceptance: () => void
 }) {
   const { state } = snapshot
   const printer = state.kind === 'warehouse' ? printerLabels[getCheck(snapshot, 'label-printing').status] : null
 
   return (
-    <section className="panel map" id="service-map" tabIndex={-1} aria-labelledby="map-heading" aria-describedby={runLabel ? 'map-run' : undefined}>
+    <section className="panel map" id="service-map" tabIndex={-1} aria-labelledby="map-heading"
+      aria-describedby={acceptanceEvidence ? 'map-run acceptance-observation' : runLabel ? 'map-run' : undefined}>
       <header className="panel-header">
         <h2 id="map-heading"><GitFork size={17} /> Service map</h2>
         <span className="panel-meta">{snapshot.phase} snapshot</span>
@@ -33,8 +37,13 @@ export function ServiceMap({ snapshot, runLabel, onReturnToLatest, onBackToCompa
         <div className="map-context">
           <span className="eyebrow" id="map-run">{runLabel ?? (state.kind === 'dispatch' ? 'Dispatch network' : 'Warehouse network')}</span>
           <strong>{snapshot.title}</strong>
-          {(onBackToComparison || onReturnToLatest) && (
+          {acceptanceEvidence && <div className="map-acceptance" id="acceptance-observation">
+            <p>{acceptanceEvidence.finding.stepNumber && `Step ${acceptanceEvidence.finding.stepNumber} · `}{requirementName(acceptanceEvidence.rule)}</p>
+            <p>{acceptanceEvidence.finding.observed} · {acceptanceEvidence.finding.reason}</p>
+          </div>}
+          {(onBackToComparison || onReturnToLatest || acceptanceEvidence) && (
             <div className="map-actions">
+              {acceptanceEvidence && <button type="button" className="step-link" onClick={onBackToAcceptance}>Back to acceptance checks</button>}
               {onBackToComparison && <button type="button" className="step-link" onClick={onBackToComparison}>Back to comparison</button>}
               {onReturnToLatest && <button type="button" className="step-link" onClick={onReturnToLatest}>Return to latest run</button>}
             </div>

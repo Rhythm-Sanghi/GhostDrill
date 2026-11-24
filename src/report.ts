@@ -1,11 +1,12 @@
 import { compareRuns } from './comparison.ts'
 import { verificationNotes } from './outcome.ts'
 import { assumptionLabels, type ContingencyResult, type RecordedDrill } from './rehearsal.ts'
+import { acceptanceEvidenceLabels, compareAcceptance, requirementName } from './acceptance.ts'
 import { checkNames, checkStatusLabels, evidenceSource, findRecordedStep, type CheckResult, type DrillRun } from './simulator.ts'
 
 interface CompletedRun {
   number: number
-  run: DrillRun & Partial<Pick<RecordedDrill, 'assumption'>>
+  run: DrillRun & Partial<Pick<RecordedDrill, 'assumption' | 'acceptance'>>
 }
 
 export function formatRunId(number: number) {
@@ -21,6 +22,21 @@ function rollbackOrder(run: DrillRun) {
 function evidenceLine(label: string, result: CheckResult, run: DrillRun) {
   const title = evidenceSource(run, result)?.title
   return `- ${label} — **${checkStatusLabels[result.status]}**. ${result.reason}${title ? ` Recorded source step — ${title}.` : ''}`
+}
+
+function acceptanceLines(run: CompletedRun['run']) {
+  if (!run.acceptance) return ['Acceptance is unevaluated for this run.']
+  const lines = [`**Acceptance result** — ${run.acceptance.result}`, '']
+  if (!run.acceptance.checks.length) lines.push('No requirements were selected.')
+  for (const { id, evidence } of run.acceptance.checks) {
+    lines.push(`- **${requirementName(id)}**`)
+    for (const finding of evidence) {
+      const source = finding.stepId && findRecordedStep(run, finding.stepId)
+      const step = source ? ` Recorded source step — ${finding.stepNumber ? `Step ${finding.stepNumber} · ` : ''}${source.title}.` : ''
+      lines.push(`  - ${acceptanceEvidenceLabels[finding.status]} — ${finding.observed} ${finding.reason}${step}`)
+    }
+  }
+  return lines
 }
 
 export function buildRehearsalReport(scenarioTitle: string, latest: CompletedRun, previous?: CompletedRun, contingencies: readonly ContingencyResult[] = []) {
@@ -50,6 +66,9 @@ export function buildRehearsalReport(scenarioTitle: string, latest: CompletedRun
   for (const { id, baseline, rollback } of run.comparisons) {
     lines.push('', `#### ${checkNames[id]}`, '', evidenceLine('Baseline', baseline, run), evidenceLine('Rollback', rollback, run))
   }
+  if (run.acceptance !== undefined) {
+    lines.push('', '### Acceptance checks', '', 'These findings apply to the selected requirements for this simulated run.', '', ...acceptanceLines(run))
+  }
 
   if (previous) {
     const prior = previous.run
@@ -77,6 +96,15 @@ export function buildRehearsalReport(scenarioTitle: string, latest: CompletedRun
       for (const { phase, before, after } of phases) {
         lines.push(`#### ${checkNames[id]} · ${phase}`, '', evidenceLine('Before', before, prior), evidenceLine('After', after, run), '')
       }
+    }
+    if (prior.acceptance !== undefined || run.acceptance !== undefined) {
+      const acceptance = compareAcceptance(prior.acceptance ?? null, run.acceptance ?? null)
+      lines.push('', '### Acceptance comparison', '', `**Acceptance transition** — ${acceptance.before} → ${acceptance.after}`)
+      if (acceptance.selectionChange) {
+        lines.push('', 'Requirements changed.', '',
+          `- Previous run — ${acceptance.selectionChange.previous}`, `- Latest run — ${acceptance.selectionChange.latest}`)
+      }
+      lines.push('', `#### Previous acceptance checks · ${priorId}`, '', ...acceptanceLines(prior))
     }
   }
 

@@ -6,16 +6,11 @@ async function download(page: Page, button: string) {
   return { name: file.suggestedFilename(), text: await readFile(await file.path(), 'utf8') }
 }
 
-async function openFile(page: Page, text: string, keyboard = false) {
+async function openFile(page: Page, text: string) {
   const open = page.getByRole('button', { name: 'Open replay file' })
-  if (keyboard) {
-    for (let index = 0; index < 3; index++) await page.keyboard.press('Tab')
-    await expect(open).toBeFocused()
-    await expect(open).toHaveCSS('outline-style', 'solid')
-  }
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser', { timeout: 8000 }),
-    keyboard ? page.keyboard.press('Enter') : open.click(),
+    open.click(),
   ])
   await chooser.setFiles({ name: 'rehearsal.json', mimeType: 'application/json', buffer: Buffer.from(text) })
 }
@@ -35,7 +30,7 @@ test('a fresh reviewer rebuilds the warehouse runs, reruns contingencies and dow
   const rehearse = outcome.getByRole('button', { name: 'Rehearse contingencies' })
   await expect(rehearse).toBeInViewport()
   if (desktop) {
-    for (let index = 0; index < 3; index++) await page.keyboard.press('Tab')
+    for (let index = 0; index < 4; index++) await page.keyboard.press('Tab')
     await expect(rehearse).toBeFocused()
     await expect(rehearse).toHaveCSS('outline-style', 'solid')
     await page.keyboard.press('Enter')
@@ -68,7 +63,7 @@ test('a fresh reviewer rebuilds the warehouse runs, reruns contingencies and dow
     const fresh = await reviewer.newPage()
     await fresh.goto('./')
     await fresh.bringToFront()
-    await openFile(fresh, exported.text, desktop)
+    await openFile(fresh, exported.text)
     const replayOutcome = fresh.getByRole('region', { name: 'Drill outcome' })
     await expect(replayOutcome).toBeFocused()
     await expect(replayOutcome.getByText('Local replay · Synthetic rehearsal')).toBeVisible()

@@ -3,11 +3,13 @@ import type { ReactNode } from 'react'
 import type { CheckId, Phase } from './scenario'
 import { checkNames, checkStatusLabels, evidenceSource, getCheck, type CheckResult, type DrillRun, type Snapshot, type Verdict } from './simulator'
 import type { ResolvedRunComparison, RunRef } from './comparison'
+import type { compareAcceptance } from './acceptance'
 
 const resultTones = { healthy: 'good', unhealthy: 'bad', unknown: 'warning' }
 const verdictTones: Record<Verdict, string> = { Verified: 'good', Failed: 'bad', Unknown: 'warning' }
 
-export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison, selectedRunRef, onSelectSnapshot, reportAction, assumptionChange }: {
+export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison, selectedRunRef, onSelectSnapshot, reportAction, assumptionChange,
+  acceptancePanel, acceptanceComparison, onViewAcceptance }: {
   snapshot: Snapshot
   requiredChecks: readonly CheckId[]
   runs: Record<RunRef, DrillRun | null>
@@ -17,6 +19,9 @@ export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison
   onSelectSnapshot: (id: string, runRef: RunRef, fromComparison: boolean) => void
   reportAction: ReactNode
   assumptionChange?: { previous: string; latest: string }
+  acceptancePanel: ReactNode
+  acceptanceComparison?: ReturnType<typeof compareAcceptance>
+  onViewAcceptance: (ref: RunRef) => void
 }) {
   const run = runs[selectedRunRef]
   const runLabel = runLabels[selectedRunRef]
@@ -76,6 +81,7 @@ export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison
             ))}
           </section>
         )}
+        {acceptancePanel}
         {comparison && (
           <section className="proof-group" aria-labelledby="run-comparison-heading">
             <h3 className="eyebrow" id="run-comparison-heading" tabIndex={-1}>Run comparison</h3>
@@ -85,6 +91,18 @@ export function Evidence({ snapshot, requiredChecks, runs, runLabels, comparison
               {' \u2192 '}
               <strong className={verdictTones[comparison.currentVerdict]}>{comparison.currentVerdict}</strong>
             </p>
+            {acceptanceComparison && <div className="comparison-diff comparison-order">
+              <p><strong>Acceptance result</strong> · {acceptanceComparison.before} → {acceptanceComparison.after}</p>
+              {acceptanceComparison.selectionChange && <>
+                <h4 className="eyebrow">Requirements changed</h4>
+                <p>Previous run · {acceptanceComparison.selectionChange.previous}</p>
+                <p>Latest run · {acceptanceComparison.selectionChange.latest}</p>
+              </>}
+              <div className="map-actions">
+                <button type="button" className="step-link" onClick={() => onViewAcceptance('prior')}>Previous acceptance checks</button>
+                <button type="button" className="step-link" onClick={() => onViewAcceptance('current')}>Latest acceptance checks</button>
+              </div>
+            </div>}
             {reportAction}
             {assumptionChange && (
               <div className="comparison-diff comparison-order">

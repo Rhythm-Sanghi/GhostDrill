@@ -1,8 +1,12 @@
 import { createRollbackPlan, missingPrintPath, type DrillScenario, type Reachability, type RunbookStep } from './scenario.ts'
 import { getCheck, runDrill, type DrillRun } from './simulator.ts'
+import { evaluateAcceptance, type AcceptanceReview, type AcceptanceRuleId } from './acceptance.ts'
 
 export type ScenarioAssumption = Reachability | 'restored' | 'offline'
-export type RecordedDrill = DrillRun & { assumption: ScenarioAssumption }
+export type RecordedDrill = DrillRun & {
+  assumption: ScenarioAssumption
+  acceptance: AcceptanceReview | null
+}
 
 export interface CompletedRun {
   number: number
@@ -32,7 +36,8 @@ export function restorationStep(scenario: DrillScenario) {
   return scenario.rollbackSteps.find(({ action }) => action.type === 'set-print-path' || action.type === 'restore-connector')
 }
 
-export function recordDrill(scenario: DrillScenario, plan: readonly RunbookStep[], assumption: ScenarioAssumption): RecordedDrill {
+export function recordDrill(scenario: DrillScenario, plan: readonly RunbookStep[], assumption: ScenarioAssumption,
+  checks: readonly AcceptanceRuleId[] | null = null): RecordedDrill {
   const affectedStep = restorationStep(scenario)?.id
   const appliedPlan = plan.map((step): RunbookStep => {
     if (step.id !== affectedStep) return step
@@ -45,7 +50,12 @@ export function recordDrill(scenario: DrillScenario, plan: readonly RunbookStep[
     }
     throw new Error('This observation does not apply to the scenario.')
   })
-  return { ...runDrill(scenario, appliedPlan), assumption }
+  const run = runDrill(scenario, appliedPlan)
+  return { ...run, assumption, acceptance: checks && evaluateAcceptance(run, checks) }
+}
+
+export function recordedRequirements(run: RecordedDrill) {
+  return run.acceptance?.checks.map(({ id }) => id) ?? null
 }
 
 export function recordedPlan(scenario: DrillScenario, run: RecordedDrill): RunbookStep[] {

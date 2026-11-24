@@ -18,6 +18,7 @@ export interface Snapshot {
   phase: Phase
   title: string
   description: string
+  actionType?: RunbookStep['action']['type']
   state: ServiceState
   checks: Readonly<Partial<Record<CheckId, CheckResult>>>
 }
@@ -167,7 +168,7 @@ export function runDrill(scenario: DrillScenario, rollbackPlan: readonly Runbook
     }
     snapshots.push({
       id: step.id, phase, title: step.title, description: step.description,
-      state, checks: evaluateChecks(state, sources),
+      actionType: action.type, state, checks: evaluateChecks(state, sources),
     })
   }
 

@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import { executeRestart, exploreRestart, type RestartCase } from '../src/restartEngine.ts'
 import { defaultRevision, type Boundary, type Observation } from '../src/restartModel.ts'
@@ -103,4 +108,25 @@ test('v3 replay rebuilds evidence and retains a disposition for its original fin
     { review: { ...review, fingerprint: 'invalid' } },
   ]) assert.throws(() => readRestartReplay(JSON.stringify({ ...untrusted, ...edit })))
   assert.throws(() => readRestartReplay(' '.repeat(16 * 1024 + 1)), /16 KB/)
+})
+
+test('the Node checker exits inconclusive when a passing replay changed its scope', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'ghost-drill-check-'))
+  const file = join(folder, 'changed-scope.json')
+  const replay = buildRestartReplay({
+    scenario: 'shipping-release',
+    original,
+    revised: { ...repaired, limit: repaired.limit - 1 },
+  })
+  writeFileSync(file, replay.json)
+  try {
+    const checker = fileURLToPath(new URL('../scripts/check-restart.ts', import.meta.url))
+    const result = spawnSync(process.execPath, [checker, file], { encoding: 'utf8' })
+    assert.equal(result.status, 2, result.stderr)
+    assert.match(result.stdout, /Revised — Pass, 9\/9 evaluated \(complete\)/)
+    assert.match(result.stdout, /Scope changed — limit\. Repair totals withheld\./)
+  } finally {
+    unlinkSync(file)
+    rmdirSync(folder)
+  }
 })

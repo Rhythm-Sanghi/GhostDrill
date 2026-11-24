@@ -22,6 +22,6 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: node scripts/check-restart.ts examples/shipping-restart-review.json
-      - run: npm run build
+      - run: node scripts/check-restart.ts examples/routing-restart-review.json
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser

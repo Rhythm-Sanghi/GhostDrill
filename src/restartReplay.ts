@@ -1,7 +1,7 @@
 import { exploreRestart, type Exploration, type RestartCase } from './restartEngine.ts'
 import {
   actions, boundaryLabels, caseOrder, defaultRevision, maxCases, observationLabels, requirements,
-  restartFixtures, restartLabels, type RestartRevision, type ScenarioId,
+  restartFixtures, restartLabels, shippingVerdictScope, type RestartRevision, type ScenarioId,
 } from './restartModel.ts'
 import { replayByteLimit } from './replay.ts'
 
@@ -28,6 +28,21 @@ export function caseLabel(testCase: RestartCase) {
   return 'boundary' in testCase
     ? `${boundaryLabels[testCase.boundary]} · ${restartLabels[testCase.restart]} · ${observationLabels[testCase.observation]}`
     : 'Uninterrupted run'
+}
+
+export function restartCoverageNotes(exploration: Exploration) {
+  const notes = [`${exploration.results.length}/${exploration.total} cases evaluated`]
+  if (!exploration.complete) notes.push('Case limit reached. Unexamined cases remain inconclusive.')
+  if (exploration.boundariesNotReached > 0) {
+    notes.push(exploration.boundariesNotReached === 1
+      ? '1 evaluated case did not reach its targeted interruption boundary.'
+      : `${exploration.boundariesNotReached} evaluated cases did not reach their targeted interruption boundaries.`)
+  }
+  return notes
+}
+
+export function formerFailuresNeedEvidence(count: number) {
+  return `${count} former ${count === 1 ? 'failure needs' : 'failures need'} evidence`
 }
 
 function normalizedScope(revision: RestartRevision) {
@@ -173,15 +188,14 @@ export function restartMarkdown(replay: RestartReplay, evaluated: ReturnType<typ
       `- Ordered actions — ${revision.actions.map((id) => actions[id]).join(' → ')}`,
       `- Requirements — ${revision.requirements.map((id) => requirements[id]).join(', ') || 'None selected'}`,
       ...(replay.scenario === 'shipping-release'
-        ? [`- Release policy — ${revision.releasePolicy === 'stable-key' ? 'Use a stable batch key' : 'Repeat without a stable key'}`]
+        ? [`- ${shippingVerdictScope}`, `- Release policy — ${revision.releasePolicy === 'stable-key' ? 'Use a stable batch key' : 'Repeat without a stable key'}`]
         : []),
       `- Boundaries — ${revision.boundaries.map((id) => boundaryLabels[id]).join('; ')}`,
       `- Observations — ${revision.observations.map((id) => observationLabels[id]).join('; ')}`,
       `- Restart choices — ${revision.restartPolicies.map((id) => restartLabels[id]).join('; ')}`,
       `- Case limit — ${revision.limit}`,
       `- Uninterrupted service — ${coverage.results[0].serviceRecovered ? 'Recovered' : 'Down'}`,
-      `- Coverage — ${coverage.results.length}/${coverage.total}, ${coverage.complete ? 'complete' : 'incomplete'}`,
-      ...(coverage.complete ? [] : ['- Unexamined cases remain inconclusive.']),
+      ...restartCoverageNotes(coverage).map((note) => `- ${note}`),
       `- Result — ${coverage.outcome}. ${coverage.counts.Pass} passed, ${coverage.counts.Violation} failed, ${coverage.counts['Needs evidence']} need evidence.`, '',
     )
     const failure = coverage.counterexample
@@ -197,7 +211,7 @@ export function restartMarkdown(replay: RestartReplay, evaluated: ReturnType<typ
     describe('Revised plan', replay.revised, after)
     lines.push('## Coverage comparison', '', `${comparison.matched} cases rechecked, ${comparison.notRepeated} original cases did not repeat, ${comparison.newCases} newly evaluated.`, '')
     lines.push(comparison.changed.length ? `Scope changed — ${comparison.changed.join(', ')}. Repair totals are withheld.`
-      : `${comparison.fixed} fixed, ${comparison.remaining} still failing, ${comparison.introduced} newly failing, ${comparison.inconclusive} former failures need evidence.`, '')
+      : `${comparison.fixed} fixed, ${comparison.remaining} still failing, ${comparison.introduced} newly failing, ${formerFailuresNeedEvidence(comparison.inconclusive)}.`, '')
   }
   if (replay.review) {
     const { disposition, note, fingerprint } = replay.review

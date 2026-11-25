@@ -148,6 +148,8 @@ test('the main flow works using the keyboard', async ({ page }, testInfo) => {
   const run = page.getByRole('region', { name: 'Drill outcome' })
   const launch = page.getByRole('button', { name: 'Try the warehouse drill' })
   await page.keyboard.press('Tab')
+  await expect(page.getByRole('button', { name: 'Open restart review' })).toBeFocused()
+  await page.keyboard.press('Tab')
   await expect(page.getByRole('combobox', { name: 'Scenario' })).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(launch).toBeFocused()
